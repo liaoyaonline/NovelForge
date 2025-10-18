@@ -1,6 +1,10 @@
 #include "Database.h"
 #include <iostream>
-#include <iomanip> // 用于格式化时间
+#include <sstream>
+#include <algorithm> // 添加此头文件用于std::transform
+#include <cctype> // 添加这个头文件
+
+
 
 // 获取当前时间的字符串表示
 std::string currentDateTime() {
@@ -17,7 +21,7 @@ Database::Database(const std::string& host, const std::string& user,
     : driver(nullptr), host(host), user(user), password(password), database(database) 
 {
     driver = get_driver_instance();
-    logFile.open("database.log", std::ios::app); // 追加模式打开日志文件
+    logFile.open("database.log", std::ios::app);
     log("Database object created");
 }
 
@@ -32,18 +36,12 @@ Database::~Database() {
 void Database::log(const std::string& message, bool error) {
     std::string logMessage = "[" + currentDateTime() + "] " + message;
     
-    // 写入日志文件
     if (logFile.is_open()) {
         logFile << logMessage << std::endl;
     }
     
-    // 如果是错误消息，同时输出到标准错误
     if (error) {
         std::cerr << logMessage << std::endl;
-    }
-    // 普通消息输出到标准输出
-    else {
-        std::cout << logMessage << std::endl;
     }
 }
 
@@ -54,6 +52,11 @@ bool Database::connect() {
             driver->connect("tcp://" + host + ":3306", user, password)
         );
         con->setSchema(database);
+        
+        // 设置字符集为UTF8，确保支持中文
+        std::unique_ptr<sql::Statement> stmt(con->createStatement());
+        stmt->execute("SET NAMES 'utf8mb4'");
+        
         log("Connected to database successfully");
         return true;
     } catch (sql::SQLException &e) {
@@ -114,6 +117,10 @@ std::vector<std::map<std::string, std::string>> Database::executeQuery(const std
             std::map<std::string, std::string> row;
             for (int i = 1; i <= columns; ++i) {
                 std::string colName = meta->getColumnName(i);
+                // 将列名转换为小写，确保键名一致性
+                std::transform(colName.begin(), colName.end(), colName.begin(), 
+                              [](unsigned char c){ return std::tolower(c); });
+                
                 if (res->isNull(i)) {
                     row[colName] = "NULL";
                 } else {
@@ -122,7 +129,13 @@ std::vector<std::map<std::string, std::string>> Database::executeQuery(const std
             }
             results.push_back(row);
         }
-        
+        // 记录返回的列名
+        std::string columnsList;
+        for (int i = 1; i <= columns; ++i) {
+            if (i > 1) columnsList += ", ";
+            columnsList += meta->getColumnName(i);
+        }
+        log("Query returned columns: " + columnsList);
         log("Query executed successfully, returned " + std::to_string(results.size()) + " rows");
         return results;
     } catch (sql::SQLException &e) {
@@ -156,7 +169,7 @@ int Database::executeUpdate(const std::string& sql) {
 
 bool Database::addItemToList(const std::string& name, const std::string& category,
                             const std::string& grade, const std::string& effect,
-                            const std::string& description, const std::string& note) {
+                            const std::string& description, const std::string& note, const std::string& operationReason) {
     log("Adding item to list: " + name);
     if (!con || con->isClosed()) {
         log("Connection closed, attempting to reconnect...");
@@ -194,6 +207,12 @@ bool Database::addItemToList(const std::string& name, const std::string& categor
         int result = pstmt->executeUpdate();
         if (result > 0) {
             log("Item added to list successfully: " + name);
+            // 记录操作日志
+            std::string opNote = "类别: " + category + ", 品质: " + grade;
+            if (!operationReason.empty()) {
+                opNote += " | 原因: " + operationReason;
+            }
+            logOperation("ADD", name, opNote);
             return true;
         } else {
             log("Failed to add item to list: " + name, true);
@@ -206,7 +225,7 @@ bool Database::addItemToList(const std::string& name, const std::string& categor
     }
 }
 
-bool Database::addItemToInventory(int itemId, int quantity, const std::string& location) {
+bool Database::addItemToInventory(int itemId, int quantity, const std::string& location, const std::string& operationReason) {
     log("Adding item to inventory. ID: " + std::to_string(itemId) + ", Quantity: " + std::to_string(quantity));
     if (!con || con->isClosed()) {
         log("Connection closed, attempting to reconnect...");
@@ -217,6 +236,13 @@ bool Database::addItemToInventory(int itemId, int quantity, const std::string& l
     }
     
     try {
+        // 获取物品名称用于日志记录
+        std::string itemName = "未知物品";
+        auto itemInfo = executeQuery("SELECT name FROM item_list WHERE id = " + std::to_string(itemId));
+        if (!itemInfo.empty()) {
+            itemName = itemInfo[0]["name"];
+        }
+        
         std::unique_ptr<sql::PreparedStatement> pstmt(
             con->prepareStatement(
                 "INSERT INTO inventory (item_id, quantity, location) "
@@ -230,7 +256,12 @@ bool Database::addItemToInventory(int itemId, int quantity, const std::string& l
         
         int result = pstmt->executeUpdate();
         if (result > 0) {
-            log("Item added to inventory successfully. ID: " + std::to_string(itemId));
+            // 修改日志记录，添加操作原因
+            std::string opNote = "数量: " + std::to_string(quantity) + ", 位置: " + location;
+            if (!operationReason.empty()) {
+                opNote += " | 原因: " + operationReason;
+            }
+            logOperation("ADD", itemName, opNote);
             return true;
         } else {
             log("Failed to add item to inventory. ID: " + std::to_string(itemId), true);
@@ -314,4 +345,246 @@ void Database::disconnect() {
         log("Disconnecting from database");
         con->close();
     }
+}
+
+// 操作日志记录方法
+bool Database::logOperation(const std::string& operationType, 
+                           const std::string& itemName, 
+                           const std::string& note) {
+    log("Logging operation: " + operationType + " for item: " + itemName);
+    if (!con || con->isClosed()) {
+        log("Connection closed, attempting to reconnect...");
+        if (!connect()) {
+            log("Failed to connect for logOperation", true);
+            return false;
+        }
+    }
+    
+    try {
+        std::unique_ptr<sql::PreparedStatement> pstmt(
+            con->prepareStatement(
+                "INSERT INTO operation_log (operation_type, item_name, operation_note) "
+                "VALUES (?, ?, ?)"
+            )
+        );
+        
+        pstmt->setString(1, operationType);
+        pstmt->setString(2, itemName);
+        pstmt->setString(3, note);
+        
+        int result = pstmt->executeUpdate();
+        if (result > 0) {
+            log("Operation logged successfully");
+            return true;
+        } else {
+            log("Failed to log operation", true);
+            return false;
+        }
+    } catch (sql::SQLException &e) {
+        std::string errorMsg = "MySQL Error in logOperation: " + std::string(e.what());
+        log(errorMsg, true);
+        return false;
+    }
+}
+
+// 获取操作日志
+std::vector<std::map<std::string, std::string>> Database::getOperationLogs(int limit) {
+    std::string query = "SELECT id, operation_type, item_name, operation_time, operation_note "
+                        "FROM operation_log "
+                        "ORDER BY operation_time DESC "
+                        "LIMIT " + std::to_string(limit);
+    
+    return executeQuery(query);
+}
+
+// 获取库存信息（联表查询）
+std::vector<std::map<std::string, std::string>> Database::getInventory() {
+    std::string query = 
+        "SELECT i.id AS inventory_id, i.item_id, il.name AS item_name, "
+        "i.quantity, i.location, i.stored_time, i.last_updated "
+        "FROM inventory i "
+        "JOIN item_list il ON i.item_id = il.id "
+        "ORDER BY i.last_updated DESC";
+    
+    return executeQuery(query);
+}
+
+// 按物品ID获取库存信息
+std::vector<std::map<std::string, std::string>> Database::getInventoryByItemId(int itemId) {
+    std::string query = 
+        "SELECT i.id AS inventory_id, i.item_id, il.name AS item_name, "
+        "i.quantity, i.location, i.stored_time, i.last_updated "
+        "FROM inventory i "
+        "JOIN item_list il ON i.item_id = il.id "
+        "WHERE i.item_id = " + std::to_string(itemId) + " "
+        "ORDER BY i.last_updated DESC";
+    
+    return executeQuery(query);
+}
+
+// 安全获取值的辅助函数
+std::string Database::safeGet(const std::map<std::string, std::string>& data, 
+                             const std::string& key, 
+                             const std::string& defaultValue) {
+    // 尝试别名映射
+    static const std::map<std::string, std::string> aliasMap = {
+        {"inventory_id", "id"},
+        {"item_name", "name"}
+    };
+    
+    std::string actualKey = key;
+    auto aliasIt = aliasMap.find(key);
+    if (aliasIt != aliasMap.end()) {
+        actualKey = aliasIt->second;
+    }
+    
+    // 原始键名检查
+    if (auto it = data.find(actualKey); it != data.end()) {
+        return it->second;
+    }
+    
+    // 小写检查
+    std::string lowerKey = actualKey;
+    std::transform(lowerKey.begin(), lowerKey.end(), lowerKey.begin(), 
+                  [](unsigned char c){ return std::tolower(c); });
+    if (auto it = data.find(lowerKey); it != data.end()) {
+        return it->second;
+    }
+    
+    // 原始列名检查
+    if (auto it = data.find(key); it != data.end()) {
+        return it->second;
+    }
+    
+    return defaultValue;
+}
+
+// ====== Database.cpp 新增方法实现 ======
+// 更新库存项目
+bool Database::updateInventoryItem(int inventoryId, int newQuantity, const std::string& newLocation,
+                                  const std::string& operationReason) {
+    log("Updating inventory item ID: " + std::to_string(inventoryId));
+    
+    if (!con || con->isClosed()) {
+        log("Connection closed, attempting to reconnect...");
+        if (!connect()) {
+            log("Failed to connect for updateInventoryItem", true);
+            return false;
+        }
+    }
+    
+    try {
+        // 获取当前库存信息用于日志记录
+        auto currentItem = getInventoryItemById(inventoryId);
+        if (currentItem.empty()) {
+            log("Inventory item not found: " + std::to_string(inventoryId), true);
+            return false;
+        }
+        
+        std::string itemName = safeGet(currentItem[0], "item_name");
+        int oldQuantity = std::stoi(safeGet(currentItem[0], "quantity"));
+        std::string oldLocation = safeGet(currentItem[0], "location");
+        
+        std::unique_ptr<sql::PreparedStatement> pstmt(
+            con->prepareStatement(
+                "UPDATE inventory SET quantity = ?, location = ? "
+                "WHERE id = ?"
+            )
+        );
+        
+        pstmt->setInt(1, newQuantity);
+        pstmt->setString(2, newLocation);
+        pstmt->setInt(3, inventoryId);
+        
+        int result = pstmt->executeUpdate();
+        if (result > 0) {
+            // 修改日志记录，添加变化详情和操作原因
+            std::string opNote = "数量: " + std::to_string(oldQuantity) + "→" + 
+                                std::to_string(newQuantity) + 
+                                ", 位置: " + oldLocation + "→" + newLocation;
+            
+            // 确保操作原因不为空
+            if (operationReason.empty()) {
+                opNote += " | 原因: 未提供";
+            } else {
+                opNote += " | 原因: " + operationReason;
+            }
+            
+            logOperation("UPDATE", itemName, opNote);
+            return true;
+        } else {
+            log("Failed to update inventory item. ID: " + std::to_string(inventoryId), true);
+            return false;
+        }
+    } catch (sql::SQLException &e) {
+        std::string errorMsg = "MySQL Error in updateInventoryItem: " + std::string(e.what());
+        log(errorMsg, true);
+        return false;
+    }
+}
+
+// 删除库存项目
+bool Database::deleteInventoryItem(int inventoryId, const std::string& operationReason) {
+    log("Deleting inventory item ID: " + std::to_string(inventoryId));
+    
+    if (!con || con->isClosed()) {
+        log("Connection closed, attempting to reconnect...");
+        if (!connect()) {
+            log("Failed to connect for deleteInventoryItem", true);
+            return false;
+        }
+    }
+    
+    try {
+        // 获取库存信息用于日志记录
+        auto currentItem = getInventoryItemById(inventoryId);
+        if (currentItem.empty()) {
+            log("Inventory item not found: " + std::to_string(inventoryId), true);
+            return false;
+        }
+        
+        std::string itemName = safeGet(currentItem[0], "item_name");
+        int quantity = std::stoi(safeGet(currentItem[0], "quantity"));
+        std::string location = safeGet(currentItem[0], "location");
+        
+        std::unique_ptr<sql::PreparedStatement> pstmt(
+            con->prepareStatement(
+                "DELETE FROM inventory WHERE id = ?"
+            )
+        );
+        
+        pstmt->setInt(1, inventoryId);
+        
+        int result = pstmt->executeUpdate();
+        if (result > 0) {
+            // 修改日志记录，添加操作原因
+            std::string opNote = "数量: " + std::to_string(quantity) + ", 位置: " + location;
+            if (operationReason.empty()) {
+                opNote += " | 原因: 未提供";
+            } else {
+                opNote += " | 原因: " + operationReason;
+            }
+            logOperation("DELETE", itemName, opNote);
+            return true;
+        } else {
+            log("Failed to delete inventory item. ID: " + std::to_string(inventoryId), true);
+            return false;
+        }
+    } catch (sql::SQLException &e) {
+        std::string errorMsg = "MySQL Error in deleteInventoryItem: " + std::string(e.what());
+        log(errorMsg, true);
+        return false;
+    }
+}
+
+// 获取单个库存项目
+std::vector<std::map<std::string, std::string>> Database::getInventoryItemById(int inventoryId) {
+    std::string query = 
+        "SELECT i.id AS inventory_id, i.item_id, il.name AS item_name, "
+        "i.quantity, i.location, i.stored_time, i.last_updated "
+        "FROM inventory i "
+        "JOIN item_list il ON i.item_id = il.id "
+        "WHERE i.id = " + std::to_string(inventoryId);
+    
+    return executeQuery(query);
 }
