@@ -21,6 +21,7 @@ link_directories(${MYSQL_LIB_DIR})
 add_executable(geartracker 
     src/Database.cpp
     src/main.cpp
+    src/Config.cpp  # 新增
 )
 
 # 链接MySQL库及所有依赖
@@ -32,6 +33,9 @@ target_link_libraries(geartracker
     ${CMAKE_THREAD_LIBS_INIT}
     ${CMAKE_DL_LIBS}
 )
+
+# 安装配置文件
+configure_file(config/config.ini ${CMAKE_CURRENT_BINARY_DIR}/config/config.ini COPYONLY)
 
 # 添加编译定义
 target_compile_definitions(geartracker PRIVATE CPPCONN_PUBLIC_FUNC=)

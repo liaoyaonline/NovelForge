@@ -1,8 +1,11 @@
 #include "Database.h"
+#include "Config.h"
 #include <iostream>
 #include <limits>
 #include <cctype>
 #include <algorithm>
+#include <chrono>
+#include <ctime>
 #include <iomanip>
 
 
@@ -12,6 +15,72 @@ void clearInputBuffer() {
     std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 }
 
+// ====== 新增分页控制类 ======
+class PaginationController {
+private:
+    int currentPage;
+    int totalPages;
+    int pageSize;
+    int totalItems;
+    
+public:
+    PaginationController(int total, int pageSize = 10) 
+        : totalItems(total), pageSize(pageSize), currentPage(1) {
+        totalPages = (totalItems + pageSize - 1) / pageSize;
+        if (totalPages == 0) totalPages = 1;
+    }
+    
+    void nextPage() {
+        if (currentPage < totalPages) {
+            currentPage++;
+        } else {
+            std::cout << "已经是最后一页！" << std::endl;
+        }
+    }
+    
+    void prevPage() {
+        if (currentPage > 1) {
+            currentPage--;
+        } else {
+            std::cout << "已经是第一页！" << std::endl;
+        }
+    }
+    
+    void goToPage(int page) {
+        if (page >= 1 && page <= totalPages) {
+            currentPage = page;
+        } else {
+            std::cout << "页码超出范围！有效范围: 1-" << totalPages << std::endl;
+        }
+    }
+    
+    int getCurrentPage() const { return currentPage; }
+    int getTotalPages() const { return totalPages; }
+    int getPageSize() const { return pageSize; }
+    int getTotalItems() const { return totalItems; }
+    
+    void displayNavigation() const {
+    std::cout << "\n===== 分页导航 =====";
+    std::cout << "\n当前页: " << currentPage << "/" << totalPages;
+    std::cout << "  每页: " << pageSize << "条记录";
+    
+    // 处理总记录数为0的情况
+    if (totalItems <= 0) {
+        std::cout << "  总记录数: 未知";
+        std::cout << "  显示记录: 0-0";
+    } else {
+        std::cout << "  总记录数: " << totalItems;
+        int start = (currentPage - 1) * pageSize + 1;
+        int end = std::min(currentPage * pageSize, totalItems);
+        std::cout << "  显示记录: " << start << "-" << end;
+    }
+    
+    std::cout << "\n操作: (n)下一页, (p)上一页, (g)跳转到页, (s)设置每页数量, (q)返回主菜单";
+    std::cout << "\n请选择: ";
+}
+
+};
+
 // 函数声明
 void displayInventory(Database& db);
 void displayOperationLogs(Database& db);
@@ -20,125 +89,171 @@ void addItemToListMenu(Database& db);
 void modifyInventoryMenu(Database& db);
 void deleteInventoryMenu(Database& db);
 void displayInventoryItem(const std::map<std::string, std::string>& item);
+void configManagementMenu(Database& db);
+void showCurrentConfig(Database& db);
+void modifyDatabaseConfig(Database& db);
+void modifyAppConfig(Database& db);
+void reloadConfig(Database& db);
+void createDefaultConfigIfMissing();
 
 int main() {
-    // 数据库配置
-    const std::string host = "192.168.1.7";
-    const std::string user = "vm_liaoya";
-    const std::string password = "123";
-    const std::string database = "geartracker";
+    // 检查并创建配置文件
+    createDefaultConfigIfMissing();
     
-    // 创建数据库连接
-    Database db(host, user, password, database);
-    
-    if (!db.connect()) {
-        std::cerr << "无法连接到数据库！" << std::endl;
-        return 1;
-    }
-    
-    if (!db.testConnection()) {
-        std::cerr << "数据库连接测试失败！" << std::endl;
-        return 1;
-    }
-    
-    std::cout << "成功连接到MySQL数据库!\n";
-    std::cout << "数据库测试查询成功!\n\n";
-    
-    int choice;
-    bool running = true;
-    
-    while (running) {
-        std::cout << "\n==== 仓库管理系统 ====\n";
-        std::cout << "1. 添加新物品到物品列表\n";
-        std::cout << "2. 添加物品到库存\n";
-        std::cout << "3. 显示库存物品\n";
-        std::cout << "4. 修改库存项目\n"; // 新增
-        std::cout << "5. 删除库存项目\n"; // 新增
-        std::cout << "6. 显示操作记录\n";
-        std::cout << "7. 退出\n"; // 序号调整
-        std::cout << "请选择操作: ";
+    // 创建数据库连接 - 只创建一个 Database 对象
+    try {
+        Database db; // 使用配置文件初始化
         
-        if (std::cin >> choice) {
-            clearInputBuffer();
+        std::cout << "成功连接到MySQL数据库!\n";
+        std::cout << "数据库测试查询成功!\n\n";
+        
+        int choice;
+        bool running = true;
+        
+        while (running) {
+            std::cout << "\n==== 仓库管理系统 ====\n";
+            std::cout << "1. 添加新物品到物品列表\n";
+            std::cout << "2. 添加物品到库存\n";
+            std::cout << "3. 显示库存物品\n";
+            std::cout << "4. 修改库存项目\n";
+            std::cout << "5. 删除库存项目\n";
+            std::cout << "6. 显示操作记录\n";
+            std::cout << "7. 配置管理\n"; // 新增配置管理
+            std::cout << "8. 退出\n";
+            std::cout << "请选择操作: ";
             
-            switch (choice) {
-                case 1: addItemToListMenu(db); break;
-                case 2: addItemToInventoryMenu(db); break;
-                case 3: displayInventory(db); break;
-                case 4: modifyInventoryMenu(db); break; // 新增
-                case 5: deleteInventoryMenu(db); break; // 新增
-                case 6: displayOperationLogs(db); break;
-                case 7: running = false; break;
-                default: std::cout << "无效的选择，请重新输入！\n";
+            if (std::cin >> choice) {
+                clearInputBuffer();
+                
+                switch (choice) {
+                    case 1: addItemToListMenu(db); break;
+                    case 2: addItemToInventoryMenu(db); break;
+                    case 3: displayInventory(db); break;
+                    case 4: modifyInventoryMenu(db); break;
+                    case 5: deleteInventoryMenu(db); break;
+                    case 6: displayOperationLogs(db); break;
+                    case 7: configManagementMenu(db); break; // 新增
+                    case 8: running = false; break;
+                    default: std::cout << "无效的选择，请重新输入！\n";
+                }
+            } else {
+                std::cout << "请输入有效的数字！" << std::endl;
+                clearInputBuffer();
             }
-        } else {
-            std::cout << "请输入有效的数字！" << std::endl;
-            clearInputBuffer();
         }
+    } catch (const std::exception& e) {
+        std::cerr << "初始化失败: " << e.what() << "\n";
+        std::cerr << "请检查配置文件 config.ini\n";
+        return 1;
     }
     
     return 0;
 }
 
-// 显示库存
+// ====== 修改显示函数 ======
 void displayInventory(Database& db) {
-    auto inventory = db.getInventory();
+    int pageSize = db.getConfig().getInt("application", "page_size", 10);
+    int totalItems = db.getTotalInventoryCount();
+    std::cout << "daiqiongfengtest111:" << totalItems << std::endl;
+    PaginationController pagination(totalItems, pageSize);
     
-    if (inventory.empty()) {
-        std::cout << "库存为空！" << std::endl;
-        return;
-    }
-    
-    std::cout << "\n==== 库存物品列表 ====\n";
-    // 设置列宽格式
-    std::cout << std::left
-              << std::setw(6) << "ID" 
-              << std::setw(8) << "物品ID"
-              << std::setw(20) << "物品名称"
-              << std::setw(6) << "数量"
-              << std::setw(15) << "位置"
-              << std::setw(20) << "存储时间"
-              << "最后更新时间\n";
-    std::cout << "---------------------------------------------------"
-              << "-----------------------------------\n";
-    
-    for (const auto& item : inventory) {
-        std::cout << std::setw(6) << Database::safeGet(item, "inventory_id") 
-                  << std::setw(8) << Database::safeGet(item, "item_id")
-                  << std::setw(20) << Database::safeGet(item, "item_name")
-                  << std::setw(6) << Database::safeGet(item, "quantity")
-                  << std::setw(15) << Database::safeGet(item, "location")
-                  << std::setw(20) << Database::safeGet(item, "stored_time")
-                  << Database::safeGet(item, "last_updated") << "\n";
+    bool inPagination = true;
+    while (inPagination) {
+        auto inventory = db.getInventory(pagination.getCurrentPage(), pagination.getPageSize());
+        
+        if (inventory.empty()) {
+            std::cout << "库存为空！" << std::endl;
+            return;
+        }
+        
+        std::cout << "\n==== 库存物品列表 (第" << pagination.getCurrentPage() 
+                  << "页/共" << pagination.getTotalPages() << "页) ====\n";
+        // ... 格式代码保持不变 ...
+        
+        for (const auto& item : inventory) {
+            std::cout << std::setw(6) << Database::safeGet(item, "inventory_id") 
+                      << std::setw(8) << Database::safeGet(item, "item_id")
+                      << std::setw(20) << Database::safeGet(item, "item_name")
+                      << std::setw(6) << Database::safeGet(item, "quantity")
+                      << std::setw(15) << Database::safeGet(item, "location")
+                      << std::setw(20) << Database::safeGet(item, "stored_time")
+                      << Database::safeGet(item, "last_updated") << "\n";
+        }
+        
+        // 显示分页导航
+        pagination.displayNavigation();
+        
+        // 处理用户输入
+        std::string input;
+        std::getline(std::cin, input);
+        
+        if (input == "n") {
+            pagination.nextPage();
+        } else if (input == "p") {
+            pagination.prevPage();
+        } else if (input == "q") {
+            inPagination = false;
+        } else if (input.rfind("g ", 0) == 0) {
+            try {
+                int page = std::stoi(input.substr(2));
+                pagination.goToPage(page);
+            } catch (...) {
+                std::cout << "无效的页码！" << std::endl;
+            }
+        } else {
+            std::cout << "无效的操作！" << std::endl;
+        }
     }
 }
 
-// 显示操作记录
 void displayOperationLogs(Database& db) {
-    auto logs = db.getOperationLogs();
+    int pageSize = db.getConfig().getInt("application", "page_size", 10);
+    int totalItems = db.getTotalOperationLogsCount();
+    PaginationController pagination(totalItems, pageSize);
     
-    if (logs.empty()) {
-        std::cout << "暂无操作记录！" << std::endl;
-        return;
-    }
-    
-    // 优化显示格式
-    std::cout << "\n==== 操作记录 ====\n";
-    std::cout << std::left
-              << std::setw(5) << "ID" 
-              << std::setw(8) << "操作类型"
-              << std::setw(20) << "物品名称"
-              << std::setw(25) << "操作时间"
-              << "备注\n";
-    std::cout << "---------------------------------------------------"
-              << "-----------------------------------\n";
-    
-    for (const auto& log : logs) {
-        std::cout << std::setw(5) << Database::safeGet(log, "id")
-                  << std::setw(8) << Database::safeGet(log, "operation_type")
-                  << std::setw(20) << Database::safeGet(log, "item_name")
-                  << std::setw(25) << Database::safeGet(log, "operation_time")
-                  << Database::safeGet(log, "operation_note") << "\n";
+    bool inPagination = true;
+    while (inPagination) {
+        auto logs = db.getOperationLogs(pagination.getCurrentPage(), pagination.getPageSize());
+        
+        if (logs.empty()) {
+            std::cout << "暂无操作记录！" << std::endl;
+            return;
+        }
+        
+        std::cout << "\n==== 操作记录 (第" << pagination.getCurrentPage() 
+                  << "页/共" << pagination.getTotalPages() << "页) ====\n";
+        // ... 格式代码保持不变 ...
+        
+        for (const auto& log : logs) {
+            std::cout << std::setw(5) << Database::safeGet(log, "id")
+                      << std::setw(8) << Database::safeGet(log, "operation_type")
+                      << std::setw(20) << Database::safeGet(log, "item_name")
+                      << std::setw(25) << Database::safeGet(log, "operation_time")
+                      << Database::safeGet(log, "operation_note") << "\n";
+        }
+        
+        // 显示分页导航
+        pagination.displayNavigation();
+        
+        // 处理用户输入
+        std::string input;
+        std::getline(std::cin, input);
+        
+        if (input == "n") {
+            pagination.nextPage();
+        } else if (input == "p") {
+            pagination.prevPage();
+        } else if (input == "g") {
+            std::cout << "输入要跳转的页码: ";
+            int page;
+            std::cin >> page;
+            clearInputBuffer();
+            pagination.goToPage(page);
+        } else if (input == "q") {
+            inPagination = false;
+        } else {
+            std::cout << "无效的操作！" << std::endl;
+        }
     }
 }
 
@@ -450,4 +565,171 @@ void displayInventoryItem(const std::map<std::string, std::string>& item) {
     std::cout << "位置: " << Database::safeGet(item, "location") << "\n";
     std::cout << "存储时间: " << Database::safeGet(item, "stored_time") << "\n";
     std::cout << "最后更新: " << Database::safeGet(item, "last_updated") << "\n";
+}
+
+// ====== 新增配置文件管理菜单 ======
+void configManagementMenu(Database& db) {
+    bool inMenu = true;
+    while (inMenu) {
+        std::cout << "\n==== 配置管理 ====\n";
+        std::cout << "1. 查看当前配置\n";
+        std::cout << "2. 修改数据库连接\n";
+        std::cout << "3. 修改应用设置\n";
+        std::cout << "4. 重新加载配置\n";
+        std::cout << "5. 返回主菜单\n";
+        std::cout << "请选择操作: ";
+        
+        int choice;
+        if (std::cin >> choice) {
+            clearInputBuffer();
+            
+            switch (choice) {
+                case 1: showCurrentConfig(db); break;
+                case 2: modifyDatabaseConfig(db); break;
+                case 3: modifyAppConfig(db); break;
+                case 4: reloadConfig(db); break;
+                case 5: inMenu = false; break;
+                default: std::cout << "无效的选择，请重新输入！\n";
+            }
+        } else {
+            std::cout << "请输入有效的数字！\n";
+            clearInputBuffer();
+        }
+    }
+}
+
+void showCurrentConfig(Database& db) {
+    Config& config = db.getConfig();
+    
+    std::cout << "\n==== 当前配置 ====\n";
+    std::cout << "[数据库配置]\n";
+    std::cout << "主机: " << config.getString("database", "host") << "\n";
+    std::cout << "端口: " << config.getInt("database", "port") << "\n";
+    std::cout << "用户名: " << config.getString("database", "username") << "\n";
+    std::cout << "密码: " << std::string(config.getString("database", "password").size(), '*') << "\n";
+    std::cout << "数据库名: " << config.getString("database", "database") << "\n\n";
+    
+    std::cout << "[应用配置]\n";
+    std::cout << "日志级别: " << config.getString("application", "log_level") << "\n";
+    std::cout << "每页数量: " << config.getInt("application", "page_size") << "\n";
+    std::cout << "日志文件: " << config.getString("application", "log_file") << "\n";
+}
+
+void modifyDatabaseConfig(Database& db) {
+    Config& config = db.getConfig();
+    
+    std::cout << "\n==== 修改数据库配置 ====\n";
+    
+    std::string host, username, password, dbName;
+    int port;
+    
+    // 获取输入
+    std::cout << "主机地址 (当前: " << config.getString("database", "host") << "): ";
+    std::getline(std::cin, host);
+    if (host.empty()) host = config.getString("database", "host");
+    
+    std::cout << "端口 (当前: " << config.getInt("database", "port") << "): ";
+    std::string portStr;
+    std::getline(std::cin, portStr);
+    port = portStr.empty() ? config.getInt("database", "port") : std::stoi(portStr);
+    
+    std::cout << "用户名 (当前: " << config.getString("database", "username") << "): ";
+    std::getline(std::cin, username);
+    if (username.empty()) username = config.getString("database", "username");
+    
+    // 密码可以留空保持原样
+    std::cout << "密码 (留空保持原样): ";
+    std::getline(std::cin, password);
+    if (password.empty()) {
+        password = config.getString("database", "password");
+    }
+    
+    std::cout << "数据库名 (当前: " << config.getString("database", "database") << "): ";
+    std::getline(std::cin, dbName);
+    if (dbName.empty()) dbName = config.getString("database", "database");
+    
+    // 确认修改
+    std::cout << "\n确认更新数据库配置? (y/n): ";
+    std::string confirm;
+    std::getline(std::cin, confirm);
+    
+    if (confirm == "y" || confirm == "Y") {
+        try {
+            db.updateDatabaseCredentials(host, port, username, password, dbName);
+            std::cout << "数据库配置更新成功！\n";
+        } catch (const std::exception& e) {
+            std::cerr << "配置更新失败: " << e.what() << "\n";
+        }
+    } else {
+        std::cout << "已取消配置更新。\n";
+    }
+}
+
+void modifyAppConfig(Database& db) {
+    Config& config = db.getConfig();
+    
+    std::cout << "\n==== 修改应用配置 ====\n";
+    
+    std::string logLevel, logFile;
+    int pageSize;
+    
+    // 获取输入
+    std::cout << "日志级别 (debug/info/warning/error) (当前: " 
+              << config.getString("application", "log_level") << "): ";
+    std::getline(std::cin, logLevel);
+    if (logLevel.empty()) logLevel = config.getString("application", "log_level");
+    
+    std::cout << "每页显示数量 (当前: " 
+              << config.getInt("application", "page_size") << "): ";
+    std::string sizeStr;
+    std::getline(std::cin, sizeStr);
+    pageSize = sizeStr.empty() ? config.getInt("application", "page_size") : std::stoi(sizeStr);
+    
+    std::cout << "日志文件路径 (当前: " 
+              << config.getString("application", "log_file") << "): ";
+    std::getline(std::cin, logFile);
+    if (logFile.empty()) logFile = config.getString("application", "log_file");
+    
+    // 更新配置
+    config.setString("application", "log_level", logLevel);
+    config.setInt("application", "page_size", pageSize);
+    config.setString("application", "log_file", logFile);
+    
+    // 保存到文件
+    config.save();
+    
+    // 重新加载配置
+    db.reloadConfig();
+    
+    std::cout << "应用配置更新成功！\n";
+}
+
+void reloadConfig(Database& db) {
+    db.reloadConfig();
+    std::cout << "配置已重新加载！\n";
+}
+
+// 在首次运行时创建默认配置文件
+void createDefaultConfigIfMissing() {
+    std::ifstream testFile("config.ini");
+    if (!testFile.good()) {
+        std::ofstream configFile("config.ini");
+        
+        if (configFile.is_open()) {
+            configFile << "[database]\n";
+            configFile << "host = 192.168.1.7\n";
+            configFile << "port = 3306\n";
+            configFile << "username = vm_liaoya\n";
+            configFile << "password = 123\n";
+            configFile << "database = geartracker\n\n";
+            
+            configFile << "[application]\n";
+            configFile << "log_level = info\n";
+            configFile << "page_size = 10\n";
+            configFile << "log_file = geartracker.log\n";
+            
+            configFile.close();
+            std::cout << "已创建默认配置文件 config.ini，请修改其中的数据库凭证后再运行程序。\n";
+        }
+    }
 }

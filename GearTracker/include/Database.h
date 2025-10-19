@@ -15,12 +15,19 @@
 #include <ctime>
 #include <iomanip> // 用于时间格式化
 #include <algorithm> // 添加这个头文件
+#include "Config.h"
+
+
+// 日志级别常量定义 (确保与头文件一致)
+const int LOG_DEBUG = 0;
+const int LOG_INFO = 1;
+const int LOG_WARNING = 2;
+const int LOG_ERROR = 3;
 
 
 class Database {
 public:
-    Database(const std::string& host, const std::string& user, 
-             const std::string& password, const std::string& database);
+    Database();
     ~Database();
     
     bool connect();
@@ -58,7 +65,7 @@ public:
     int getItemIdByName(const std::string& name);
     
     // 库存管理方法
-    std::vector<std::map<std::string, std::string>> getInventory();
+    std::vector<std::map<std::string, std::string>> getInventory(int page = 1, int pageSize = 10);
     std::vector<std::map<std::string, std::string>> getInventoryByItemId(int itemId);
     
     // 操作日志方法
@@ -66,7 +73,7 @@ public:
                      const std::string& itemName, 
                      const std::string& note = "");
     
-    std::vector<std::map<std::string, std::string>> getOperationLogs(int limit = 50);
+    std::vector<std::map<std::string, std::string>> getOperationLogs(int page = 1, int pageSize = 10);
     
     // 日志方法
     void log(const std::string& message, bool error = false);
@@ -80,6 +87,14 @@ public:
                               const std::string& key, 
                               const std::string& defaultValue = "N/A");
 
+    // 新增获取总数的方法
+    int getTotalInventoryCount();
+    int getTotalOperationLogsCount();
+    Config& getConfig() { return config; }
+    void reloadConfig();
+    void updateDatabaseCredentials(const std::string& host, int port, 
+                                  const std::string& user, const std::string& password,
+                                  const std::string& dbName);
 private:
     sql::Driver* driver;
     std::unique_ptr<sql::Connection> con;
@@ -88,6 +103,10 @@ private:
     std::string password;
     std::string database;
     std::ofstream logFile; // 日志文件流
+    Config config; // 配置对象
+    bool logToConsole = true;  // 添加这行
+    int logLevelFlag = LOG_INFO;  // 添加日志级别标志
+    std::string logFileName;  // 修改为 logFileName
 };
 
 #endif // DATABASE_H

@@ -1,8 +1,22 @@
 #include "Database.h"
+#include "Config.h" 
+
+// 首先包含 MySQL 头文件
+#include <cppconn/driver.h>
+#include <cppconn/exception.h>
+#include <cppconn/connection.h>
+#include <cppconn/resultset.h>
+#include <cppconn/statement.h>
+#include <cppconn/prepared_statement.h> // 添加这个
+
+// 然后是标准库头文件
 #include <iostream>
 #include <sstream>
-#include <algorithm> // 添加此头文件用于std::transform
-#include <cctype> // 添加这个头文件
+#include <algorithm>
+#include <cctype>
+#include <chrono>
+#include <ctime>
+#include <iomanip> // 添加这个用于时间格式化
 
 
 
@@ -16,32 +30,84 @@ std::string currentDateTime() {
     return buf;
 }
 
-Database::Database(const std::string& host, const std::string& user, 
-                   const std::string& password, const std::string& database)
-    : driver(nullptr), host(host), user(user), password(password), database(database) 
-{
-    driver = get_driver_instance();
-    logFile.open("database.log", std::ios::app);
-    log("Database object created");
+Database::Database() {
+    // 从配置加载数据库凭证
+    std::string host = config.getString("database", "host", "127.0.0.1");
+    int port = config.getInt("database", "port", 3306);
+    std::string user = config.getString("database", "username", "");
+    std::string password = config.getString("database", "password", "");
+    std::string dbName = config.getString("database", "database", "geartracker");
+    logFileName = config.getString("application", "log_file", "geartracker.log");
+    
+    try {
+        // 使用特定驱动实例（代替 DriverManager）
+        driver = get_driver_instance();
+        
+        // 构建连接字符串
+        std::string connectionStr = "tcp://" + host + ":" + std::to_string(port);
+        
+        // 创建连接
+        con.reset(driver->connect(connectionStr, user, password));
+        con->setSchema(dbName);
+        log("成功连接到数据库: " + dbName);
+    } catch (sql::SQLException &e) {
+        std::string errorMsg = "无法连接到数据库: " + std::string(e.what());
+        log(errorMsg, true);
+        throw std::runtime_error(errorMsg);
+    }
+    // 设置日志级别
+    std::string logLevel = config.getString("application", "log_level", "info");
+    if (logLevel == "debug") {
+        logLevelFlag = LOG_DEBUG;
+    } else if (logLevel == "warning") {
+        logLevelFlag = LOG_WARNING;
+    } else if (logLevel == "error") {
+        logLevelFlag = LOG_ERROR;
+    } else {
+        logLevelFlag = LOG_INFO;
+    }
 }
 
 Database::~Database() {
-    if (logFile.is_open()) {
-        log("Database object destroyed");
-        logFile.close();
+    // 清理资源
+    if (con) {
+        con->close();
     }
-    disconnect();
 }
 
-void Database::log(const std::string& message, bool error) {
-    std::string logMessage = "[" + currentDateTime() + "] " + message;
+// 修改日志函数使用配置文件中的日志文件
+void Database::log(const std::string& message, bool isError) {
+    int level = isError ? LOG_ERROR : LOG_INFO;
     
-    if (logFile.is_open()) {
-        logFile << logMessage << std::endl;
+    // 检查日志级别
+    if (level < logLevelFlag) return;
+    
+    // 获取当前时间
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+    std::tm now_tm = *std::localtime(&now_time);
+    
+    // 格式化时间
+    std::ostringstream timeStream;
+    timeStream << std::put_time(&now_tm, "%Y-%m-%d %H:%M:%S");
+    
+    // 打开日志文件
+    std::ofstream logFileStream(logFileName, std::ios_base::app);
+    if (!logFileStream.is_open()) {
+        // 如果文件打开失败，尝试使用默认文件名
+        logFileStream.open("geartracker.log", std::ios_base::app);
     }
     
-    if (error) {
-        std::cerr << logMessage << std::endl;
+    if (logFileStream.is_open()) {
+        logFileStream << "[" << timeStream.str() << "] ";
+        if (isError) logFileStream << "[ERROR] ";
+        else logFileStream << "[INFO] ";
+        logFileStream << message << std::endl;
+    }
+    
+    // 同时输出到控制台
+    if (logToConsole) {
+        std::cout << "[" << timeStream.str() << "] " << message << std::endl;
     }
 }
 
@@ -137,10 +203,23 @@ std::vector<std::map<std::string, std::string>> Database::executeQuery(const std
         }
         log("Query returned columns: " + columnsList);
         log("Query executed successfully, returned " + std::to_string(results.size()) + " rows");
+        log("Query result size: " + std::to_string(results.size()));
+        if (!results.empty()) {
+            std::ostringstream oss;
+            oss << "Queryddddd result details: \n";
+            for (const auto& row : results) {
+                for (const auto& col : row) {
+                    oss << col.first << ": " << col.second << " | ";
+                }
+                oss << "\n";
+            }
+            log(oss.str());
+        }
         return results;
     } catch (sql::SQLException &e) {
         std::string errorMsg = "MySQL Query Error (" + sql + "): " + std::string(e.what());
         log(errorMsg, true);
+        log("Query result size: " + std::to_string(results.size()));
         return results;
     }
 }
@@ -388,23 +467,32 @@ bool Database::logOperation(const std::string& operationType,
 }
 
 // 获取操作日志
-std::vector<std::map<std::string, std::string>> Database::getOperationLogs(int limit) {
-    std::string query = "SELECT id, operation_type, item_name, operation_time, operation_note "
-                        "FROM operation_log "
-                        "ORDER BY operation_time DESC "
-                        "LIMIT " + std::to_string(limit);
+// 带分页的操作日志查询
+std::vector<std::map<std::string, std::string>> Database::getOperationLogs(int page, int pageSize) {
+    // 计算偏移量
+    int offset = (page - 1) * pageSize;
+    
+    std::string query = 
+        "SELECT id, operation_type, item_name, operation_time, operation_note "
+        "FROM operation_log "
+        "ORDER BY operation_time DESC "
+        "LIMIT " + std::to_string(pageSize) + " OFFSET " + std::to_string(offset);
     
     return executeQuery(query);
 }
 
-// 获取库存信息（联表查询）
-std::vector<std::map<std::string, std::string>> Database::getInventory() {
+// 带分页的库存查询
+std::vector<std::map<std::string, std::string>> Database::getInventory(int page, int pageSize) {
+    // 计算偏移量
+    int offset = (page - 1) * pageSize;
+    
     std::string query = 
         "SELECT i.id AS inventory_id, i.item_id, il.name AS item_name, "
         "i.quantity, i.location, i.stored_time, i.last_updated "
         "FROM inventory i "
         "JOIN item_list il ON i.item_id = il.id "
-        "ORDER BY i.last_updated DESC";
+        "ORDER BY i.last_updated DESC "
+        "LIMIT " + std::to_string(pageSize) + " OFFSET " + std::to_string(offset);
     
     return executeQuery(query);
 }
@@ -587,4 +675,122 @@ std::vector<std::map<std::string, std::string>> Database::getInventoryItemById(i
         "WHERE i.id = " + std::to_string(inventoryId);
     
     return executeQuery(query);
+}
+
+// 获取库存总数
+int Database::getTotalInventoryCount() {
+    try {
+        log("Executing total inventory count query");
+        // 改为直接获取第一列的值
+        std::unique_ptr<sql::Statement> stmt(con->createStatement());
+        std::unique_ptr<sql::ResultSet> res(stmt->executeQuery("SELECT COUNT(*) FROM inventory"));
+        
+        if (res->next()) {
+            int count = res->getInt(1); // 直接获取第一列整数值
+            log("Total inventory count: " + std::to_string(count));
+            return count;
+        }
+        log("Total count query returned no result", true);
+        return 0;
+    } catch (sql::SQLException &e) {
+        std::string errorMsg = "MySQL Error in getTotalInventoryCount: " + std::string(e.what());
+        log(errorMsg, true);
+        return 0;
+    } catch (const std::exception& e) {
+        std::string errorMsg = "Error in getTotalInventoryCount: " + std::string(e.what());
+        log(errorMsg, true);
+        return 0;
+    }
+}
+
+
+
+// 获取操作日志总数
+int Database::getTotalOperationLogsCount() {
+    try {
+        log("Executing total operation logs count query");
+        // 确保连接有效
+        if (!con || con->isClosed()) {
+            log("Connection closed, attempting to reconnect...");
+            if (!connect()) {
+                log("Failed to connect for getTotalOperationLogsCount", true);
+                return 0;
+            }
+        }
+        
+        // 直接获取第一列的值
+        std::unique_ptr<sql::Statement> stmt(con->createStatement());
+        std::unique_ptr<sql::ResultSet> res(stmt->executeQuery("SELECT COUNT(*) FROM operation_log"));
+        
+        if (res->next()) {
+            int count = res->getInt(1); // 直接获取第一列整数值
+            log("Total operation logs count: " + std::to_string(count));
+            return count;
+        }
+        log("Total operation logs count query returned no result", true);
+        return 0;
+    } catch (sql::SQLException &e) {
+        std::string errorMsg = "MySQL Error in getTotalOperationLogsCount: " + std::string(e.what());
+        log(errorMsg, true);
+        return 0;
+    } catch (const std::exception& e) {
+        std::string errorMsg = "Error in getTotalOperationLogsCount: " + std::string(e.what());
+        log(errorMsg, true);
+        return 0;
+    }
+}
+
+
+
+
+void Database::reloadConfig() {
+    config.reload();
+    logFileName = config.getString("application", "log_file", "geartracker.log");  // 使用logFileName
+    
+    // 重新设置日志级别
+    std::string logLevel = config.getString("application", "log_level", "info");
+    if (logLevel == "debug") {
+        logLevelFlag = LOG_DEBUG;
+    } else if (logLevel == "warning") {
+        logLevelFlag = LOG_WARNING;
+    } else if (logLevel == "error") {
+        logLevelFlag = LOG_ERROR;
+    } else {
+        logLevelFlag = LOG_INFO;
+    }
+}
+
+void Database::updateDatabaseCredentials(const std::string& host, int port, 
+                                        const std::string& user, const std::string& password,
+                                        const std::string& dbName) {
+    // 更新配置对象
+    config.setString("database", "host", host);
+    config.setInt("database", "port", port);
+    config.setString("database", "username", user);
+    config.setString("database", "password", password);
+    config.setString("database", "database", dbName);
+    
+    // 保存到文件
+    config.save();
+    
+    // 重新连接数据库
+    try {
+        if (con) {
+            con->close();
+        }
+        
+        // 构建连接字符串
+        std::string connectionStr = "tcp://" + host + ":" + std::to_string(port);
+        // 使用 DriverManager 获取驱动实例
+        driver = get_driver_instance(); // 重新获取驱动实例
+
+        // 创建新连接
+        con.reset(driver->connect(connectionStr, user, password));
+        con->setSchema(dbName);
+        log("数据库连接已更新，成功连接到: " + dbName);
+    } catch (sql::SQLException &e) {
+        std::string errorMsg = "无法更新数据库连接: " + std::string(e.what());
+        log(errorMsg, true);
+        throw std::runtime_error(errorMsg);
+    }
 }
