@@ -10,12 +10,11 @@ class Config {
 private:
     std::map<std::string, std::map<std::string, std::string>> configData;
     std::string configFilePath;
-    
     void parseLine(const std::string& line);
-    
-public:
-    Config(const std::string& filePath = "config.ini");
-    
+public:    
+    Config(); 
+    Config(const std::string& filePath); 
+    std::string getConfigFilePath();
     void reload();
     void save();
     

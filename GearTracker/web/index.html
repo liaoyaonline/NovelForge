@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>库存管理系统</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>库存管理系统</h1>
+            <nav>
+                <ul>
+                    <li><a href="#" class="active" data-section="inventory">库存管理</a></li>
+                    <li><a href="#" data-section="logs">操作日志</a></li>
+                    <li><a href="#" data-section="settings">系统设置</a></li>
+                </ul>
+            </nav>
+        </header>
+        
+        <main>
+            <section id="inventory-section" class="active">
+                <div class="section-header">
+                    <h2>库存管理</h2>
+                    <div class="actions">
+                        <button id="refresh-inventory">刷新</button>
+                        <button id="add-item">添加物品</button>
+                    </div>
+                </div>
+                
+                <div class="filters">
+                    <input type="text" id="search-items" placeholder="搜索物品名称或位置...">
+                    <button id="apply-filter">搜索</button>
+                </div>
+                
+                <div class="pagination-controls">
+                    <button id="prev-page">上一页</button>
+                    <span id="page-info">第 1 页，共 1 页</span>
+                    <button id="next-page">下一页</button>
+                    <select id="per-page">
+                        <option value="5">5条/页</option>
+                        <option value="10" selected>10条/页</option>
+                        <option value="20">20条/页</option>
+                        <option value="50">50条/页</option>
+                    </select>
+                </div>
+                
+                <div class="table-container">
+                    <table id="inventory-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>物品ID</th>
+                                <th>物品名称</th>
+                                <th>数量</th>
+                                <th>位置</th>
+                                <th>入库时间</th>
+                                <th>最后更新</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- 动态填充 -->
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="loading" id="loading-inventory">
+                    <div class="spinner"></div>
+                    <p>加载中...</p>
+                </div>
+            </section>
+            
+            <section id="logs-section">
+                <h2>操作日志</h2>
+                <div class="loading" id="loading-logs">
+                    <div class="spinner"></div>
+                    <p>加载中...</p>
+                </div>
+                <p>操作日志功能开发中...</p>
+            </section>
+            
+            <section id="settings-section">
+                <h2>系统设置</h2>
+                <p>系统设置功能开发中...</p>
+            </section>
+        </main>
+        
+        <footer>
+            <p>库存管理系统 &copy; 2025</p>
+        </footer>
+    </div>
+    
+    <script src="js/main.js"></script>
+</body>
+</html>

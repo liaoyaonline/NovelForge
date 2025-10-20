@@ -1,4 +1,5 @@
 #include "Database.h"
+#include "WebServer.h"
 #include "Config.h"
 #include <iostream>
 #include <limits>
@@ -26,10 +27,10 @@ private:
 public:
     PaginationController(int total, int pageSize = 10) 
         : totalItems(total), pageSize(pageSize), currentPage(1) {
-        totalPages = (totalItems + pageSize - 1) / pageSize;
+        // 防止除以零
+        totalPages = (pageSize > 0) ? ((totalItems + pageSize - 1) / pageSize) : 1;
         if (totalPages == 0) totalPages = 1;
     }
-    
     void nextPage() {
         if (currentPage < totalPages) {
             currentPage++;
@@ -97,16 +98,28 @@ void reloadConfig(Database& db);
 void createDefaultConfigIfMissing();
 
 int main() {
-    // 检查并创建配置文件
+    // 创建默认配置（如果需要）
     createDefaultConfigIfMissing();
     
-    // 创建数据库连接 - 只创建一个 Database 对象
     try {
-        Database db; // 使用配置文件初始化
+        // 创建配置实例
+        Config config;
+        
+        // 创建数据库实例（堆分配）
+         Database db(config);
+        // 尝试连接数据库
+        if (!db.connect()) {
+            throw std::runtime_error("无法连接到数据库");
+        }
         
         std::cout << "成功连接到MySQL数据库!\n";
-        std::cout << "数据库测试查询成功!\n\n";
         
+        // 启动Web服务器
+        int webPort = 8080; // 默认端口
+        WebServer server(webPort, db);
+        server.start();
+        
+        std::cout << "Web管理界面已启动: http://localhost:" << webPort << std::endl;
         int choice;
         bool running = true;
         
@@ -141,12 +154,14 @@ int main() {
                 clearInputBuffer();
             }
         }
+        
+        // 停止Web服务器（如果需要显式停止）
+        server.stop();
     } catch (const std::exception& e) {
         std::cerr << "初始化失败: " << e.what() << "\n";
         std::cerr << "请检查配置文件 config.ini\n";
         return 1;
     }
-    
     return 0;
 }
 

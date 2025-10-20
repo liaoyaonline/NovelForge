@@ -26,8 +26,25 @@ static std::string toLower(const std::string& str) {
     return result;
 }
 
-Config::Config(const std::string& filePath) : configFilePath(filePath) {
+Config::Config() : configFilePath(getConfigFilePath()) {
     reload();
+}
+
+
+// 新增方法：获取配置文件路径
+std::string Config::getConfigFilePath() {
+    // 尝试从环境变量获取配置路径
+    if(const char* envPath = std::getenv("GEARTRACKER_CONFIG")) {
+        return envPath;
+    }
+    
+    // 检查当前目录下的 config 子目录
+    if(std::ifstream("config/config.ini").good()) {
+        return "config/config.ini";
+    }
+    
+    // 检查可执行文件目录
+    return "config.ini"; // 默认路径
 }
 
 void Config::reload() {

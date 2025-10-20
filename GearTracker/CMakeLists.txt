@@ -13,6 +13,7 @@ include_directories(
     include
     ${MYSQL_INCLUDE_DIR}
     ${MYSQL_INCLUDE_DIR}/cppconn
+    /usr/include/jsoncpp
 )
 
 link_directories(${MYSQL_LIB_DIR})
@@ -22,6 +23,7 @@ add_executable(geartracker
     src/Database.cpp
     src/main.cpp
     src/Config.cpp  # 新增
+    src/WebServer.cpp
 )
 
 # 链接MySQL库及所有依赖
@@ -30,12 +32,15 @@ target_link_libraries(geartracker
     ssl
     crypto
     pthread
-    ${CMAKE_THREAD_LIBS_INIT}
-    ${CMAKE_DL_LIBS}
+    jsoncpp
 )
 
 # 安装配置文件
 configure_file(config/config.ini ${CMAKE_CURRENT_BINARY_DIR}/config/config.ini COPYONLY)
+
+# 新增：复制web文件夹到构建目录
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/web DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+
 
 # 添加编译定义
 target_compile_definitions(geartracker PRIVATE CPPCONN_PUBLIC_FUNC=)

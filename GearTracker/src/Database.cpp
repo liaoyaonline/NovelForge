@@ -17,6 +17,8 @@
 #include <chrono>
 #include <ctime>
 #include <iomanip> // 添加这个用于时间格式化
+#include <sstream>
+
 
 
 
@@ -30,32 +32,19 @@ std::string currentDateTime() {
     return buf;
 }
 
-Database::Database() {
-    // 从配置加载数据库凭证
-    std::string host = config.getString("database", "host", "127.0.0.1");
-    int port = config.getInt("database", "port", 3306);
-    std::string user = config.getString("database", "username", "");
-    std::string password = config.getString("database", "password", "");
-    std::string dbName = config.getString("database", "database", "geartracker");
+// Database.cpp
+Database::Database(Config& cfg) 
+    : config(cfg), 
+      driver(nullptr), 
+      con(nullptr),
+      logToConsole(true),  // 初始化日志控制台输出
+      logLevelFlag(LOG_INFO),  // 默认日志级别
+      connected(false)  // 连接状态初始化为false
+{
+    // 1. 从配置获取日志文件名
     logFileName = config.getString("application", "log_file", "geartracker.log");
     
-    try {
-        // 使用特定驱动实例（代替 DriverManager）
-        driver = get_driver_instance();
-        
-        // 构建连接字符串
-        std::string connectionStr = "tcp://" + host + ":" + std::to_string(port);
-        
-        // 创建连接
-        con.reset(driver->connect(connectionStr, user, password));
-        con->setSchema(dbName);
-        log("成功连接到数据库: " + dbName);
-    } catch (sql::SQLException &e) {
-        std::string errorMsg = "无法连接到数据库: " + std::string(e.what());
-        log(errorMsg, true);
-        throw std::runtime_error(errorMsg);
-    }
-    // 设置日志级别
+    // 2. 设置日志级别
     std::string logLevel = config.getString("application", "log_level", "info");
     if (logLevel == "debug") {
         logLevelFlag = LOG_DEBUG;
@@ -64,16 +53,24 @@ Database::Database() {
     } else if (logLevel == "error") {
         logLevelFlag = LOG_ERROR;
     } else {
-        logLevelFlag = LOG_INFO;
+        logLevelFlag = LOG_INFO; // 默认INFO级别
     }
+    
+    // 3. 初始化日志系统（但不连接到数据库）
+    log("数据库实例已创建，配置加载完成");
 }
 
+
+// Database.cpp
+// 保持析构函数实现不变
 Database::~Database() {
     // 清理资源
-    if (con) {
+    if (con && !con->isClosed()) {
+        log("Disconnecting from database");
         con->close();
     }
 }
+
 
 // 修改日志函数使用配置文件中的日志文件
 void Database::log(const std::string& message, bool isError) {
@@ -112,21 +109,51 @@ void Database::log(const std::string& message, bool isError) {
 }
 
 bool Database::connect() {
+    // 从配置获取最新连接参数
+    std::string host = config.getString("database", "host", "127.0.0.1");
+    int port = config.getInt("database", "port", 3306);
+    std::string user = config.getString("database", "username", "");
+    std::string password = config.getString("database", "password", "");
+    std::string dbName = config.getString("database", "database", "geartracker");
+    
+    log("尝试连接数据库: tcp://" + host + ":" + std::to_string(port) + 
+        " 数据库名: " + dbName);
+    
     try {
-        log("Connecting to database: tcp://" + host + ":3306");
-        con = std::unique_ptr<sql::Connection>(
-            driver->connect("tcp://" + host + ":3306", user, password)
-        );
-        con->setSchema(database);
+        // 确保驱动已初始化
+        if (!driver) {
+            driver = get_driver_instance();
+        }
+        
+        // 构建连接字符串（包含端口）
+        std::string connectionStr = "tcp://" + host + ":" + std::to_string(port);
+        
+        log("创建连接: " + connectionStr);
+        
+        // 创建新连接
+        con.reset(driver->connect(connectionStr, user, password));
+        con->setSchema(dbName);
         
         // 设置字符集为UTF8，确保支持中文
         std::unique_ptr<sql::Statement> stmt(con->createStatement());
         stmt->execute("SET NAMES 'utf8mb4'");
         
-        log("Connected to database successfully");
+        log("成功连接到数据库: " + dbName);
         return true;
     } catch (sql::SQLException &e) {
-        std::string errorMsg = "MySQL Connection Error: " + std::string(e.what());
+        std::string errorMsg = "MySQL连接错误: " + std::string(e.what());
+        log(errorMsg, true);
+        
+        // 添加详细错误诊断
+        std::cerr << "连接参数: \n"
+                  << "主机: " << host << "\n"
+                  << "端口: " << port << "\n"
+                  << "用户名: " << user << "\n"
+                  << "数据库: " << dbName << "\n";
+        
+        return false;
+    } catch (const std::exception& e) {
+        std::string errorMsg = "连接错误: " + std::string(e.what());
         log(errorMsg, true);
         return false;
     }
@@ -468,18 +495,26 @@ bool Database::logOperation(const std::string& operationType,
 
 // 获取操作日志
 // 带分页的操作日志查询
+// Database.cpp
 std::vector<std::map<std::string, std::string>> Database::getOperationLogs(int page, int pageSize) {
-    // 计算偏移量
     int offset = (page - 1) * pageSize;
     
+    // 优化查询：添加别名提高可读性
     std::string query = 
-        "SELECT id, operation_type, item_name, operation_time, operation_note "
+        "SELECT "
+        "  id, "
+        "  operation_type, "
+        "  item_name, "
+        "  DATE_FORMAT(operation_time, '%Y-%m-%d %H:%i:%s') AS operation_time, "
+        "  operation_note "
         "FROM operation_log "
         "ORDER BY operation_time DESC "
-        "LIMIT " + std::to_string(pageSize) + " OFFSET " + std::to_string(offset);
+        "LIMIT " + std::to_string(pageSize) + " "
+        "OFFSET " + std::to_string(offset);
     
     return executeQuery(query);
 }
+
 
 // 带分页的库存查询
 std::vector<std::map<std::string, std::string>> Database::getInventory(int page, int pageSize) {
@@ -681,6 +716,13 @@ std::vector<std::map<std::string, std::string>> Database::getInventoryItemById(i
 int Database::getTotalInventoryCount() {
     try {
         log("Executing total inventory count query");
+         // 添加连接检查
+        if (!con || con->isClosed()) {
+            if (!connect()) {
+                log("Failed to connect for total count", true);
+                return 0;
+            }
+        }
         // 改为直接获取第一列的值
         std::unique_ptr<sql::Statement> stmt(con->createStatement());
         std::unique_ptr<sql::ResultSet> res(stmt->executeQuery("SELECT COUNT(*) FROM inventory"));
@@ -793,4 +835,54 @@ void Database::updateDatabaseCredentials(const std::string& host, int port,
         log(errorMsg, true);
         throw std::runtime_error(errorMsg);
     }
+}
+
+std::vector<Database::InventoryItem> Database::getInventoryPaginated(int page, int perPage) {
+    std::vector<InventoryItem> items;
+    
+    try {
+        log("Executing getInventoryPaginated query");
+        // 确保连接有效
+        if (!con || con->isClosed()) {
+            log("Connection closed, attempting to reconnect...");
+            if (!connect()) {
+                log("Failed to connect for getInventoryPaginated", true);
+                return items;
+            }
+        }
+        
+        int offset = (page - 1) * perPage;
+        std::stringstream sql;
+        sql << "SELECT i.id, i.item_id, il.name AS item_name, i.quantity, i.location, i.stored_time, i.last_updated "
+            << "FROM inventory i JOIN item_list il ON i.item_id = il.id "
+            << "ORDER BY i.last_updated DESC "
+            << "LIMIT " << perPage << " OFFSET " << offset;
+        
+        log("SQL: " + sql.str());
+        
+        std::unique_ptr<sql::Statement> stmt(con->createStatement());
+        std::unique_ptr<sql::ResultSet> res(stmt->executeQuery(sql.str()));
+        
+        while (res->next()) {
+            InventoryItem item;
+            item.id = res->getInt("id");
+            item.item_id = res->getInt("item_id");
+            item.item_name = res->getString("item_name");
+            item.quantity = res->getInt("quantity");
+            item.location = res->getString("location");
+            item.stored_time = res->getString("stored_time");
+            item.last_updated = res->getString("last_updated");
+            items.push_back(item);
+        }
+        
+        log("Retrieved " + std::to_string(items.size()) + " inventory items");
+    } catch (sql::SQLException &e) {
+        std::string errorMsg = "MySQL Error in getInventoryPaginated: " + std::string(e.what());
+        log(errorMsg, true);
+    } catch (const std::exception& e) {
+        std::string errorMsg = "Error in getInventoryPaginated: " + std::string(e.what());
+        log(errorMsg, true);
+    }
+    
+    return items;
 }

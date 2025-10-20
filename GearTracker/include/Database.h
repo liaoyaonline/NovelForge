@@ -1,6 +1,7 @@
 #ifndef DATABASE_H
 #define DATABASE_H
 
+#include "Config.h"
 #include <cppconn/driver.h>
 #include <cppconn/connection.h>
 #include <cppconn/resultset.h>
@@ -15,7 +16,6 @@
 #include <ctime>
 #include <iomanip> // 用于时间格式化
 #include <algorithm> // 添加这个头文件
-#include "Config.h"
 
 
 // 日志级别常量定义 (确保与头文件一致)
@@ -25,15 +25,28 @@ const int LOG_WARNING = 2;
 const int LOG_ERROR = 3;
 
 
+
+class Config;
+
+
 class Database {
 public:
-    Database();
-    ~Database();
+
+    struct InventoryItem {
+        int id;
+        int item_id;
+        std::string item_name;
+        int quantity;
+        std::string location;
+        std::string stored_time;
+        std::string last_updated;
+    };
     
     bool connect();
     bool testConnection();
     void disconnect();
     
+    ~Database();
     // 查询方法
     std::vector<std::map<std::string, std::string>> executeQuery(const std::string& sql);
     
@@ -95,7 +108,16 @@ public:
     void updateDatabaseCredentials(const std::string& host, int port, 
                                   const std::string& user, const std::string& password,
                                   const std::string& dbName);
+    // 添加分页获取库存数据的方法
+    std::vector<InventoryItem> getInventoryPaginated(int page, int perPage);
+    explicit Database(Config& config);
 private:
+    Database();
+    
+
+    Database(const Database&) = delete;
+    Database& operator=(const Database&) = delete;
+
     sql::Driver* driver;
     std::unique_ptr<sql::Connection> con;
     std::string host;
@@ -107,6 +129,7 @@ private:
     bool logToConsole = true;  // 添加这行
     int logLevelFlag = LOG_INFO;  // 添加日志级别标志
     std::string logFileName;  // 修改为 logFileName
+    bool connected;
 };
 
 #endif // DATABASE_H
