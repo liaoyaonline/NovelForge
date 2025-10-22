@@ -129,6 +129,48 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // 初始加载库存数据
     loadInventoryData();
+    // 添加连接状态监控
+    function checkConnectionStatus() {
+        fetch('/api/connection-status')
+            .then(response => {
+                if (!response.ok) throw new Error('网络请求失败');
+                return response.json();
+            })
+            .then(data => {
+                const statusElem = document.getElementById('connection-status');
+                
+                // 移除所有状态类
+                statusElem.classList.remove('connected', 'disconnected', 'unknown');
+                
+                if (data.status === 'connected') {
+                    statusElem.classList.add('connected');
+                    statusElem.querySelector('.status-text').textContent = '数据库已连接';
+                } else {
+                    statusElem.classList.add('disconnected');
+                    const errorMsg = data.error ? data.error.substring(0, 50) : '未知错误';
+                    statusElem.querySelector('.status-text').textContent = `连接失败: ${errorMsg}`;
+                }
+            })
+            .catch(error => {
+                const statusElem = document.getElementById('connection-status');
+                statusElem.classList.remove('connected', 'disconnected');
+                statusElem.classList.add('unknown');
+                statusElem.querySelector('.status-text').textContent = '连接状态未知';
+            });
+    }
+    
+    // 初始检查
+    checkConnectionStatus();
+    
+    // 每30秒检查一次
+    setInterval(checkConnectionStatus, 30000);
+    
+    // 添加点击刷新功能
+    document.getElementById('connection-status').addEventListener('click', function() {
+        this.classList.add('unknown');
+        this.querySelector('.status-text').textContent = '检查连接中...';
+        checkConnectionStatus();
+    });
 });
 
 // 加载库存数据
@@ -402,7 +444,7 @@ function deleteItem(id) {
 }
 
 
-// 修改后的加载日志函数
+// 修改后的加载日志函数 - 完整搜索功能实现
 function loadLogsData() {
     console.log("[DEBUG] 开始加载操作日志数据");
     
@@ -426,7 +468,13 @@ function loadLogsData() {
     
     console.log("加载日志数据:", url); // 调试信息
     
-    fetch(url)
+    // 添加请求取消机制（防止快速切换导致的请求堆积）
+    if (window.logsFetchController) {
+        window.logsFetchController.abort();
+    }
+    window.logsFetchController = new AbortController();
+    
+    fetch(url, { signal: window.logsFetchController.signal })
         .then(response => {
             if (!response.ok) {
                 throw new Error(`HTTP错误! 状态码: ${response.status}`);
@@ -435,6 +483,9 @@ function loadLogsData() {
         })
         .then(data => {
             console.log("操作日志响应:", data); // 调试信息
+            
+            // 清除请求控制器引用
+            window.logsFetchController = null;
             
             if (data.status === "success") {
                 // 更新分页信息
@@ -449,26 +500,44 @@ function loadLogsData() {
                 document.getElementById('logs-prev-page').disabled = currentLogPage <= 1;
                 document.getElementById('logs-next-page').disabled = currentLogPage >= totalLogPages;
                 
-                // 填充表格
+                // 填充表格 - 添加搜索高亮功能
                 if (data.logs && data.logs.length > 0) {
+                    const fragment = document.createDocumentFragment();
+                    const searchPattern = search ? new RegExp(`(${escapeRegExp(search)})`, 'gi') : null;
+                    
                     data.logs.forEach(log => {
                         const row = document.createElement('tr');
                         
                         // 根据操作类型添加样式类
                         const typeClass = `log-type-${log.operation_type}`;
                         
+                        // 高亮搜索结果
+                        let highlightedItemName = searchPattern 
+                            ? log.item_name.replace(searchPattern, '<mark>$1</mark>')
+                            : log.item_name;
+                        
+                        let highlightedNote = searchPattern 
+                            ? log.operation_note.replace(searchPattern, '<mark>$1</mark>')
+                            : log.operation_note;
+                        
                         row.innerHTML = `
                             <td>${log.id}</td>
                             <td><span class="log-type ${typeClass}">${log.operation_type}</span></td>
-                            <td>${log.item_name}</td>
+                            <td>${highlightedItemName}</td>
                             <td>${formatDate(log.operation_time)}</td>
-                            <td>${log.operation_note}</td>
+                            <td>${highlightedNote}</td>
                         `;
-                        tableBody.appendChild(row);
+                        fragment.appendChild(row);
                     });
+                    tableBody.appendChild(fragment);
                 } else {
                     const row = document.createElement('tr');
-                    row.innerHTML = `<td colspan="5" style="text-align: center;">没有找到操作记录</td>`;
+                    // 智能空状态提示
+                    const noResultsText = search 
+                        ? `没有找到包含"${search}"的操作记录`
+                        : '没有找到操作记录';
+                    
+                    row.innerHTML = `<td colspan="5" style="text-align: center;">${noResultsText}</td>`;
                     tableBody.appendChild(row);
                 }
             } else {
@@ -481,6 +550,12 @@ function loadLogsData() {
             }
         })
         .catch(error => {
+            // 忽略取消请求的错误
+            if (error.name === 'AbortError') {
+                console.log('请求被取消');
+                return;
+            }
+            
             console.error('加载日志失败:', error);
             const row = document.createElement('tr');
             row.innerHTML = `<td colspan="5" style="text-align: center; color: red;">
@@ -493,6 +568,12 @@ function loadLogsData() {
         });
 }
 
+// 辅助函数：转义正则表达式特殊字符
+function escapeRegExp(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+
 function updateLogsPaginationInfo() {
     document.getElementById('logs-page-info').textContent = 
         `第 ${currentLogPage} 页，共 ${totalLogPages} 页 (${totalLogItems} 条记录)`;
@@ -501,3 +582,5 @@ function updateLogsPaginationInfo() {
     document.getElementById('logs-prev-page').disabled = currentLogPage <= 1;
     document.getElementById('logs-next-page').disabled = currentLogPage >= totalLogPages;
 }
+
+

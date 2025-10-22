@@ -126,7 +126,7 @@ int main() {
         
         // 启动Web服务器
         int webPort = 8080; // 默认端口
-        WebServer server(webPort, db);
+        WebServer server(webPort, config);
         server.start();
         
         std::cout << "Web管理界面已启动: http://localhost:" << webPort << std::endl;

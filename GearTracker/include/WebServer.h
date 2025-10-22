@@ -6,39 +6,25 @@
 #include <mutex>
 #include <thread>
 #include "httplib.h"
+#include "Config.h"  // 改为包含 Config.h 而不是 Database.h
 #include "Database.h"
 
 // 将 OperationLogEntry 定义在类内部
 class WebServer {
 public:
-    // 在类内部定义 OperationLogEntry
-    struct OperationLogEntry {
-        int id;
-        std::string operation_type;
-        std::string item_name;
-        std::string operation_time_str; // 直接存储格式化后的时间字符串
-        std::string operation_note;
-    };
 
-    WebServer(int port, Database& db);
+    WebServer(int port, Config& config);
     ~WebServer();
     
     void start();
     void stop();
     bool isRunning() const;
     
-    // 操作日志相关方法
-    std::vector<OperationLogEntry> getOperationLogsPaginated(int page, int perPage);
-    int getOperationLogsCount();
-    
 private:
+    Config& config_;  // 修改为保存 Config 引用
     void setupRoutes();
-    std::string getInventoryData(int page, int perPage);
-    std::string getOperationLogs(int page, int perPage);
-    std::time_t parseDateTime(const std::string& datetimeStr);
     
     int port_;
-    Database& db_;
     std::unique_ptr<httplib::Server> server;
     std::thread serverThread;
     bool running = false;

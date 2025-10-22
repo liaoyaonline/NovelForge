@@ -16,6 +16,7 @@
 #include <ctime>
 #include <iomanip> // 用于时间格式化
 #include <algorithm> // 添加这个头文件
+#include <mutex>
 
 
 // 日志级别常量定义 (确保与头文件一致)
@@ -78,7 +79,7 @@ public:
     int getItemIdByName(const std::string& name);
     
     // 库存管理方法
-    std::vector<std::map<std::string, std::string>> getInventory(int page = 1, int pageSize = 10);
+    std::vector<std::map<std::string, std::string>> getInventory(int page = 1, int pageSize = 10, const std::string& search = "");
     std::vector<std::map<std::string, std::string>> getInventoryByItemId(int itemId);
     
     // 操作日志方法
@@ -86,7 +87,10 @@ public:
                      const std::string& itemName, 
                      const std::string& note = "");
     
-    std::vector<std::map<std::string, std::string>> getOperationLogs(int page = 1, int pageSize = 10);
+    std::vector<std::map<std::string, std::string>> getOperationLogs(
+        int page = 1, 
+        int pageSize = 10, 
+        const std::string& search = "");
     
     // 日志方法
     void log(const std::string& message, bool error = false);
@@ -109,9 +113,13 @@ public:
                                   const std::string& user, const std::string& password,
                                   const std::string& dbName);
     // 添加分页获取库存数据的方法
-    std::vector<InventoryItem> getInventoryPaginated(int page, int perPage);
+    std::vector<InventoryItem> getInventoryPaginated(int page, int perPage, const std::string& search = "");
     explicit Database(Config& config);
+    std::vector<std::map<std::string, std::string>> parseResultSet(sql::ResultSet* res);
+    void ensureConnected();
+
 private:
+    std::mutex connectionMutex; // 添加互斥锁定义
     Database();
     
 

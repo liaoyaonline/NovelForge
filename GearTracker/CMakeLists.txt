@@ -1,8 +1,11 @@
 cmake_minimum_required(VERSION 3.10)
 project(geartracker)
 
+# 设置调试标志
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_BUILD_TYPE Debug)  # 强制使用调试模式
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O0")  # 添加调试符号并禁用优化
 
 # 使用您提供的路径
 set(MYSQL_INCLUDE_DIR "/usr/include")
@@ -22,7 +25,7 @@ link_directories(${MYSQL_LIB_DIR})
 add_executable(geartracker 
     src/Database.cpp
     src/main.cpp
-    src/Config.cpp  # 新增
+    src/Config.cpp
     src/WebServer.cpp
 )
 
@@ -35,12 +38,20 @@ target_link_libraries(geartracker
     jsoncpp
 )
 
+# 添加自定义目标以GDB方式运行
+add_custom_target(run_debug
+    COMMAND echo "启动程序调试..."
+    COMMAND gdb -ex "set breakpoint pending on" -ex "run" -ex "bt" --args ./geartracker
+    DEPENDS geartracker
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    COMMENT "在GDB调试器中运行程序"
+)
+
 # 安装配置文件
 configure_file(config/config.ini ${CMAKE_CURRENT_BINARY_DIR}/config/config.ini COPYONLY)
 
-# 新增：复制web文件夹到构建目录
+# 复制web文件夹到构建目录
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/web DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
-
 
 # 添加编译定义
 target_compile_definitions(geartracker PRIVATE CPPCONN_PUBLIC_FUNC=)

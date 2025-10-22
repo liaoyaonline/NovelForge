@@ -18,6 +18,8 @@
 #include <ctime>
 #include <iomanip> // 添加这个用于时间格式化
 #include <sstream>
+#include <mutex>
+#include <thread> // 添加头文件用于睡眠
 
 
 
@@ -37,9 +39,9 @@ Database::Database(Config& cfg)
     : config(cfg), 
       driver(nullptr), 
       con(nullptr),
-      logToConsole(true),  // 初始化日志控制台输出
-      logLevelFlag(LOG_INFO),  // 默认日志级别
-      connected(false)  // 连接状态初始化为false
+      logToConsole(true),
+      logLevelFlag(LOG_INFO),
+      connected(false)
 {
     // 1. 从配置获取日志文件名
     logFileName = config.getString("application", "log_file", "geartracker.log");
@@ -53,12 +55,16 @@ Database::Database(Config& cfg)
     } else if (logLevel == "error") {
         logLevelFlag = LOG_ERROR;
     } else {
-        logLevelFlag = LOG_INFO; // 默认INFO级别
+        logLevelFlag = LOG_INFO;
     }
     
-    // 3. 初始化日志系统（但不连接到数据库）
-    log("数据库实例已创建，配置加载完成");
+    // 3. 初始化日志系统并立即尝试连接数据库
+    log("数据库实例已创建，配置加载完成 - 尝试连接数据库");
+    
+    // 关键修改：在构造函数中立即尝试连接
+    connect();
 }
+
 
 
 // Database.cpp
@@ -108,7 +114,28 @@ void Database::log(const std::string& message, bool isError) {
     }
 }
 
+
+
 bool Database::connect() {
+    std::lock_guard<std::mutex> lock(connectionMutex);
+    
+    // 清除任何现有无效连接
+    if (con && !con->isClosed()) {
+        try {
+            log("关闭现有连接");
+            con->close();
+        } catch (const sql::SQLException& e) {
+            std::ostringstream oss;
+            oss << "关闭连接错误 [code:" << e.getErrorCode()
+                << ", SQLState:" << e.getSQLState() << "]: "
+                << e.what();
+            log(oss.str(), true);
+        } catch (...) {
+            log("关闭连接时发生未知错误", true);
+        }
+        con.reset();
+    }
+    
     // 从配置获取最新连接参数
     std::string host = config.getString("database", "host", "127.0.0.1");
     int port = config.getInt("database", "port", 3306);
@@ -116,152 +143,232 @@ bool Database::connect() {
     std::string password = config.getString("database", "password", "");
     std::string dbName = config.getString("database", "database", "geartracker");
     
-    log("尝试连接数据库: tcp://" + host + ":" + std::to_string(port) + 
-        " 数据库名: " + dbName);
+    // 记录详细的连接参数
+    log("连接参数: ");
+    log("  主机: " + host);
+    log("  端口: " + std::to_string(port));
+    log("  用户: " + user);
+    log("  数据库: " + dbName);
     
     try {
         // 确保驱动已初始化
         if (!driver) {
+            log("获取MySQL驱动实例");
             driver = get_driver_instance();
+            if (!driver) {
+                log("无法获取MySQL驱动实例", true);
+                return false;
+            }
         }
         
-        // 构建连接字符串（包含端口）
+        // 构建连接字符串
         std::string connectionStr = "tcp://" + host + ":" + std::to_string(port);
-        
         log("创建连接: " + connectionStr);
         
         // 创建新连接
-        con.reset(driver->connect(connectionStr, user, password));
+        log("正在连接到MySQL服务器...");
+        sql::Connection* rawCon = driver->connect(connectionStr, user, password);
+        if (!rawCon) {
+            log("连接创建失败，但没有抛出异常", true);
+            return false;
+        }
+        con.reset(rawCon);
+        
+        // ====== 添加超时设置 ======
+        log("设置连接超时选项");
+        con->setClientOption("OPT_CONNECT_TIMEOUT", "5");
+        con->setClientOption("OPT_READ_TIMEOUT", "10");
+        con->setClientOption("OPT_WRITE_TIMEOUT", "10");
+        
+        // 设置数据库
+        log("选择数据库: " + dbName);
         con->setSchema(dbName);
         
-        // 设置字符集为UTF8，确保支持中文
+        // 设置字符集
+        log("设置字符集为utf8mb4");
         std::unique_ptr<sql::Statement> stmt(con->createStatement());
         stmt->execute("SET NAMES 'utf8mb4'");
+        stmt->execute("SET CHARACTER SET utf8mb4");
         
-        log("成功连接到数据库: " + dbName);
-        return true;
+        // ====== 优化连接保持设置 ======
+        con->setClientOption("MYSQL_OPT_KEEPALIVE_INTERVAL", "60");
+        con->setClientOption("MYSQL_OPT_TCP_KEEPALIVE", "1");
+        log("已启用TCP keepalive");
+        
+        // 执行简单查询验证连接
+        log("执行连接验证查询...");
+        std::unique_ptr<sql::Statement> testStmt(con->createStatement());
+        std::unique_ptr<sql::ResultSet> res(testStmt->executeQuery("SELECT 1 AS test_value"));
+        if (res->next() && res->getInt("test_value") == 1) {
+            log("连接验证成功");
+            connected = true;
+            return true;
+        } else {
+            log("连接验证失败: 查询返回意外结果", true);
+            connected = false;
+            return false;
+        }
     } catch (sql::SQLException &e) {
-        std::string errorMsg = "MySQL连接错误: " + std::string(e.what());
-        log(errorMsg, true);
+        std::ostringstream oss;
+        oss << "MySQL连接错误 [code:" << e.getErrorCode()
+            << ", SQLState:" << e.getSQLState() << "]: "
+            << e.what();
+        log(oss.str(), true);
         
         // 添加详细错误诊断
-        std::cerr << "连接参数: \n"
-                  << "主机: " << host << "\n"
-                  << "端口: " << port << "\n"
-                  << "用户名: " << user << "\n"
-                  << "数据库: " << dbName << "\n";
+        std::ostringstream params;
+        params << "连接参数: \n"
+               << "  主机: " << host << "\n"
+               << "  端口: " << port << "\n"
+               << "  用户: " << user << "\n"
+               << "  数据库: " << dbName;
+        log(params.str(), true);
         
+        connected = false;
         return false;
     } catch (const std::exception& e) {
         std::string errorMsg = "连接错误: " + std::string(e.what());
         log(errorMsg, true);
+        connected = false;
+        return false;
+    } catch (...) {
+        log("未知连接错误", true);
+        connected = false;
         return false;
     }
 }
 
+
+
 bool Database::testConnection() {
-    log("Testing database connection...");
-    if (!con || con->isClosed()) {
-        if (!connect()) {
-            log("Test connection failed: cannot connect to database", true);
-            return false;
-        }
+    std::lock_guard<std::mutex> lock(connectionMutex);
+    log("测试数据库连接状态");
+    
+    // 首先检查是否已有有效连接
+    if (con && !con->isClosed() && con->isValid()) {
+        log("连接状态良好，无需重新连接");
+        return true;
     }
     
-    try {
-        std::unique_ptr<sql::Statement> stmt(con->createStatement());
-        std::unique_ptr<sql::ResultSet> res(stmt->executeQuery("SELECT 1"));
-        bool success = res->next() && res->getInt(1) == 1;
-        
-        if (success) {
-            log("Database test query successful");
-        } else {
-            log("Database test query failed: unexpected result", true);
-        }
-        
-        return success;
-    } catch (sql::SQLException &e) {
-        std::string errorMsg = "MySQL Test Query Error: " + std::string(e.what());
-        log(errorMsg, true);
-        return false;
-    }
+    // 如果没有连接或连接无效，尝试重新连接
+    log("连接无效或未建立，尝试重新连接");
+    return connect();
 }
 
 std::vector<std::map<std::string, std::string>> Database::executeQuery(const std::string& sql) {
+    std::lock_guard<std::mutex> lock(connectionMutex);
     log("Executing query: " + sql);
     std::vector<std::map<std::string, std::string>> results;
     
-    if (!con || con->isClosed()) {
-        log("Connection closed, attempting to reconnect...");
-        if (!connect()) {
-            log("Failed to connect for query", true);
+    // 最大重试次数
+    const int maxRetries = 2;
+    int attempt = 0;
+    
+    while (attempt <= maxRetries) {
+        attempt++;
+        
+        try {
+            // 确保连接有效（修改点1）
+            if (!con || con->isClosed() || !con->isValid()) {
+                log("Connection invalid, reconnecting... (attempt " + std::to_string(attempt) + ")");
+                if (!connect()) {
+                    log("Failed to reconnect for query", true);
+                    return results; // 返回空结果
+                }
+            }
+            
+            // 创建语句对象（修改点2）
+            sql::Statement* stmt = con->createStatement();
+            
+            // 执行查询（修改点3）
+            sql::ResultSet* res = stmt->executeQuery(sql);
+            
+            // 获取元数据
+            sql::ResultSetMetaData* meta = res->getMetaData();
+            const int columns = meta->getColumnCount();
+            
+            // 记录列信息（优化点4）
+            std::ostringstream columnsStream;
+            for (int i = 1; i <= columns; ++i) {
+                if (i > 1) columnsStream << ", ";
+                columnsStream << meta->getColumnName(i);
+            }
+            log("Query returned columns: " + columnsStream.str());
+            
+            // 处理结果集（修改点5）
+            while (res->next()) {
+                std::map<std::string, std::string> row;
+                for (int i = 1; i <= columns; ++i) {
+                    std::string colName = meta->getColumnName(i);
+                    std::transform(colName.begin(), colName.end(), colName.begin(), 
+                                  [](unsigned char c){ return std::tolower(c); });
+                    
+                    if (res->isNull(i)) {
+                        row[colName] = "";
+                    } else {
+                        row[colName] = res->getString(i);
+                    }
+                }
+                results.push_back(row);
+            }
+            
+            // 显式释放资源（关键修改点6）
+            delete res;
+            delete stmt;
+            
+            log("Query executed successfully, returned " + std::to_string(results.size()) + " rows");
+            
+            // 只在调试时记录详细结果
+            #ifdef DEBUG
+            if (!results.empty()) {
+                std::ostringstream oss;
+                oss << "Query result details (first row): ";
+                for (const auto& col : results[0]) {
+                    oss << col.first << ": " << col.second << " | ";
+                }
+                log(oss.str());
+            }
+            #endif
+            
+            return results;
+            
+        } catch (sql::SQLException &e) {
+            // 处理特定错误代码（修改点7）
+            if (e.getErrorCode() == 2014 || e.getErrorCode() == 2006) { // Commands out of sync or server gone away
+                log("Commands out of sync, resetting connection...", true);
+                disconnect(); // 强制断开
+                con.reset();  // 重置连接
+                
+                if (attempt <= maxRetries) {
+                    log("Retrying query (attempt " + std::to_string(attempt) + ")");
+                    continue; // 重试查询
+                }
+            }
+            
+            // 记录详细错误（修改点8）
+            std::ostringstream errorMsg;
+            errorMsg << "MySQL Query Error [" << e.getErrorCode() 
+                     << ", SQLState: " << e.getSQLState() << "]: " 
+                     << e.what() << "\nQuery: " << sql;
+            log(errorMsg.str(), true);
+            
+            return results;
+            
+        } catch (const std::exception& e) {
+            std::string errorMsg = "General query error: " + std::string(e.what());
+            log(errorMsg, true);
             return results;
         }
     }
     
-    try {
-        std::unique_ptr<sql::Statement> stmt(con->createStatement());
-        std::unique_ptr<sql::ResultSet> res(stmt->executeQuery(sql));
-        
-        sql::ResultSetMetaData* meta = res->getMetaData();
-        int columns = meta->getColumnCount();
-        // 记录返回的列名
-        std::string columnsList;
-        for (int i = 1; i <= columns; ++i) {
-            if (i > 1) columnsList += ", ";
-            columnsList += meta->getColumnName(i);
-        }
-        log("Query returned columns: " + columnsList);
-        
-        // 记录第一行的所有键
-        if (!results.empty()) {
-            std::ostringstream keyStream;
-            keyStream << "First row keys: ";
-            for (const auto& pair : results[0]) {
-                keyStream << pair.first << " | ";
-            }
-            log(keyStream.str());
-        }
-        while (res->next()) {
-            std::map<std::string, std::string> row;
-            for (int i = 1; i <= columns; ++i) {
-                std::string colName = meta->getColumnName(i);
-                // 将列名转换为小写，确保键名一致性
-                std::transform(colName.begin(), colName.end(), colName.begin(), 
-                              [](unsigned char c){ return std::tolower(c); });
-                
-                if (res->isNull(i)) {
-                    row[colName] = "NULL";
-                } else {
-                    row[colName] = res->getString(i);
-                }
-            }
-            results.push_back(row);
-        }
-        log("Query returned columns: " + columnsList);
-        log("Query executed successfully, returned " + std::to_string(results.size()) + " rows");
-        log("Query result size: " + std::to_string(results.size()));
-        if (!results.empty()) {
-            std::ostringstream oss;
-            oss << "Queryddddd result details: \n";
-            for (const auto& row : results) {
-                for (const auto& col : row) {
-                    oss << col.first << ": " << col.second << " | ";
-                }
-                oss << "\n";
-            }
-            log(oss.str());
-        }
-        return results;
-    } catch (sql::SQLException &e) {
-        std::string errorMsg = "MySQL Query Error (" + sql + "): " + std::string(e.what());
-        log(errorMsg, true);
-        log("Query result size: " + std::to_string(results.size()));
-        return results;
-    }
+    return results; // 所有重试失败后返回
 }
 
+
+
 int Database::executeUpdate(const std::string& sql) {
+    std::lock_guard<std::mutex> lock(connectionMutex); // 使用互斥锁
+    ensureConnected();
     log("Executing update: " + sql);
     if (!con || con->isClosed()) {
         log("Connection closed, attempting to reconnect...");
@@ -286,6 +393,7 @@ int Database::executeUpdate(const std::string& sql) {
 bool Database::addItemToList(const std::string& name, const std::string& category,
                             const std::string& grade, const std::string& effect,
                             const std::string& description, const std::string& note, const std::string& operationReason) {
+    ensureConnected();
     log("Adding item to list: " + name);
     if (!con || con->isClosed()) {
         log("Connection closed, attempting to reconnect...");
@@ -342,6 +450,7 @@ bool Database::addItemToList(const std::string& name, const std::string& categor
 }
 
 bool Database::addItemToInventory(int itemId, int quantity, const std::string& location, const std::string& operationReason) {
+    ensureConnected(); // 确保连接有效
     log("Adding item to inventory. ID: " + std::to_string(itemId) + ", Quantity: " + std::to_string(quantity));
     if (!con || con->isClosed()) {
         log("Connection closed, attempting to reconnect...");
@@ -391,6 +500,7 @@ bool Database::addItemToInventory(int itemId, int quantity, const std::string& l
 }
 
 bool Database::itemExistsInList(const std::string& name) {
+    ensureConnected(); // 确保连接有效
     log("Checking if item exists: " + name);
     try {
         if (!con || con->isClosed()) {
@@ -426,6 +536,7 @@ bool Database::itemExistsInList(const std::string& name) {
 }
 
 int Database::getItemIdByName(const std::string& name) {
+    ensureConnected(); // 确保连接有效
     log("Getting item ID by name: " + name);
     try {
         if (!con || con->isClosed()) {
@@ -467,6 +578,7 @@ void Database::disconnect() {
 bool Database::logOperation(const std::string& operationType, 
                            const std::string& itemName, 
                            const std::string& note) {
+    ensureConnected(); // 确保连接有效
     log("Logging operation: " + operationType + " for item: " + itemName);
     if (!con || con->isClosed()) {
         log("Connection closed, attempting to reconnect...");
@@ -506,44 +618,247 @@ bool Database::logOperation(const std::string& operationType,
 // 获取操作日志
 // 带分页的操作日志查询
 // Database.cpp
-std::vector<std::map<std::string, std::string>> Database::getOperationLogs(int page, int pageSize) {
-    int offset = (page - 1) * pageSize;
+// Database.cpp 实现文件中的修改
+std::vector<std::map<std::string, std::string>> Database::getOperationLogs(
+    int page, 
+    int perPage,  // 更合理的参数命名
+    const std::string& search) 
+{
+    ensureConnected();
+    int offset = (page - 1) * perPage;  // 使用 perPage 而不是 pageSize
     
-    // 优化查询：添加别名提高可读性
-    std::string query = 
+    // 构建基础查询 - 修改别名
+    std::string baseQuery = 
         "SELECT "
         "  id, "
         "  operation_type, "
         "  item_name, "
-        "  DATE_FORMAT(operation_time, '%Y-%m-%d %H:%i:%s') AS operation_time, "
+        "  DATE_FORMAT(operation_time, '%Y-%m-%d %H:%i:%s') AS formatted_time, " // 改为 formatted_time
         "  operation_note "
-        "FROM operation_log "
-        "ORDER BY operation_time DESC "
-        "LIMIT " + std::to_string(pageSize) + " "
-        "OFFSET " + std::to_string(offset);
+        "FROM operation_log ";
     
-    return executeQuery(query);
+    // 准备查询和参数
+    std::string fullQuery;
+    std::vector<std::string> params;
+    
+    if (!search.empty()) {
+        baseQuery += "WHERE operation_type LIKE ? OR item_name LIKE ? OR operation_note LIKE ? ";
+        params = { // 一次性初始化
+            "%" + search + "%",
+            "%" + search + "%",
+            "%" + search + "%"
+        };
+    }
+    
+    // 添加排序和分页
+    fullQuery = baseQuery + 
+        "ORDER BY operation_time DESC "
+        "LIMIT " + std::to_string(perPage) + 
+        " OFFSET " + std::to_string(offset);
+    
+    log("Executing operation logs query: " + fullQuery);
+    if (!search.empty()) {
+        log("With search term: " + search);
+    }
+    
+    // 执行查询
+    if (!con || con->isClosed() || !con->isValid()) {
+        log("Connection invalid, reconnecting...");
+        if (!connect()) {
+            log("Failed to reconnect for getOperationLogs", true);
+            return {};
+        }
+    }
+    
+    try {
+        // 统一使用预处理语句（更安全）
+        std::unique_ptr<sql::PreparedStatement> pstmt(
+            con->prepareStatement(fullQuery)
+        );
+        
+        for (size_t i = 0; i < params.size(); i++) {
+            pstmt->setString(i + 1, params[i]);
+        }
+        
+        std::unique_ptr<sql::ResultSet> res(pstmt->executeQuery());
+        auto results = parseResultSet(res.get());
+        
+        // 添加调试日志
+        log("Operation logs query returned " + std::to_string(results.size()) + " rows");
+        if (!results.empty()) {
+            std::ostringstream oss;
+            oss << "First log entry fields: ";
+            for (const auto& field : results[0]) {
+                oss << field.first << " ";
+            }
+            log(oss.str());
+        }
+        
+        return results;
+    } catch (sql::SQLException &e) {
+        std::ostringstream oss;
+        oss << "MySQL Error in getOperationLogs ["
+            << e.getErrorCode() << "]: " << e.what()
+            << "\nQuery: " << fullQuery;
+        log(oss.str(), true);
+        return {};
+    } catch (const std::exception& e) {
+        std::string errorMsg = "Error in getOperationLogs: " + std::string(e.what());
+        log(errorMsg, true);
+        return {};
+    }
+}
+
+
+
+// 添加辅助函数：解析结果集
+std::vector<std::map<std::string, std::string>> Database::parseResultSet(sql::ResultSet* res) {
+    std::vector<std::map<std::string, std::string>> results;
+    
+    if (!res) return results;
+    
+    sql::ResultSetMetaData* meta = res->getMetaData();
+    int columns = meta->getColumnCount();
+    
+    // 记录列名
+    std::ostringstream columnsList;
+    for (int i = 1; i <= columns; ++i) {
+        if (i > 1) columnsList << ", ";
+        columnsList << meta->getColumnName(i) << " (Label: " << meta->getColumnLabel(i) << ")";
+    }
+    log("Result set columns: " + columnsList.str());
+    
+    while (res->next()) {
+        std::map<std::string, std::string> row;
+        for (int i = 1; i <= columns; ++i) {
+            // 优先使用列标签（AS 别名），如果没有则使用列名
+            std::string colName = meta->getColumnLabel(i);
+            if (colName.empty()) {
+                colName = meta->getColumnName(i);
+                log("Warning: Empty column label for column " + std::to_string(i) + 
+                    ", using name: " + colName);
+            }
+            
+            // 将列名转换为小写，确保键名一致性
+            std::transform(colName.begin(), colName.end(), colName.begin(), 
+                          [](unsigned char c){ return std::tolower(c); });
+            
+            if (res->isNull(i)) {
+                row[colName] = "";
+            } else {
+                try {
+                    row[colName] = res->getString(i);
+                } catch (const sql::SQLException& e) {
+                    std::ostringstream oss;
+                    oss << "Error getting string for column " << colName 
+                         << " (index " << i << "): " << e.what();
+                    log(oss.str(), true);
+                    row[colName] = "[ERROR]";
+                }
+            }
+        }
+        results.push_back(row);
+    }
+    
+    // 记录第一行数据
+    if (!results.empty()) {
+        std::ostringstream oss;
+        oss << "First row data: ";
+        for (const auto& pair : results[0]) {
+            oss << pair.first << "=" << pair.second << " | ";
+        }
+        log(oss.str());
+    }
+    
+    return results;
 }
 
 
 // 带分页的库存查询
-std::vector<std::map<std::string, std::string>> Database::getInventory(int page, int pageSize) {
+std::vector<std::map<std::string, std::string>> 
+Database::getInventory(int page, int pageSize, const std::string& search) 
+{
+    ensureConnected();
+    log("获取库存数据，页码: " + std::to_string(page) + 
+        ", 每页: " + std::to_string(pageSize) + 
+        ", 搜索: '" + search + "'");
+    
     // 计算偏移量
     int offset = (page - 1) * pageSize;
     
+    // 构建基础查询
     std::string query = 
         "SELECT i.id AS inventory_id, i.item_id, il.name AS item_name, "
-        "i.quantity, i.location, i.stored_time, i.last_updated "
+        "i.quantity, i.location, "
+        "DATE_FORMAT(i.stored_time, '%Y-%m-%d %H:%i:%s') AS stored_time, "
+        "DATE_FORMAT(i.last_updated, '%Y-%m-%d %H:%i:%s') AS last_updated "
         "FROM inventory i "
-        "JOIN item_list il ON i.item_id = il.id "
-        "ORDER BY i.last_updated DESC "
-        "LIMIT " + std::to_string(pageSize) + " OFFSET " + std::to_string(offset);
+        "JOIN item_list il ON i.item_id = il.id ";
     
-    return executeQuery(query);
+    // 添加搜索条件
+    if (!search.empty()) {
+        query += "WHERE il.name LIKE ? OR i.location LIKE ? ";
+    }
+    
+    query += "ORDER BY i.last_updated DESC "
+             "LIMIT ? OFFSET ?";
+    
+    log("执行查询: " + query);
+    
+    try {
+        // 准备参数化查询
+        std::unique_ptr<sql::PreparedStatement> pstmt(con->prepareStatement(query));
+        int paramIndex = 1;
+        
+        // 设置搜索参数
+        if (!search.empty()) {
+            std::string likePattern = "%" + search + "%";
+            pstmt->setString(paramIndex++, likePattern);
+            pstmt->setString(paramIndex++, likePattern);
+        }
+        
+        // 设置分页参数
+        pstmt->setInt(paramIndex++, pageSize);
+        pstmt->setInt(paramIndex++, offset);
+        
+        // 执行查询
+        log("执行查询...");
+        std::unique_ptr<sql::ResultSet> res(pstmt->executeQuery());
+        
+        log("解析结果...");
+        auto results = parseResultSet(res.get());
+        
+        log("获取 " + std::to_string(results.size()) + " 条库存记录");
+        return results;
+        
+    } catch (sql::SQLException &e) {
+        // 详细错误处理
+        std::ostringstream errorMsg;
+        errorMsg << "库存查询错误 [MySQL错误 " << e.getErrorCode() << "]: " 
+                 << e.what() << "\nSQL状态: " << e.getSQLState();
+        
+        log(errorMsg.str(), true);
+        
+        // 如果是连接错误，尝试重新连接
+        if (e.getErrorCode() == 2013 || e.getErrorCode() == 2006) {  // CR_SERVER_LOST 或 CR_SERVER_GONE_ERROR
+            log("检测到连接丢失，尝试重新连接...");
+            disconnect();
+            connect();
+        }
+        
+        // 重新抛出异常让上层处理
+        throw;
+        
+    } catch (const std::exception& e) {
+        log("库存查询异常: " + std::string(e.what()), true);
+        throw;
+    }
 }
+
 
 // 按物品ID获取库存信息
 std::vector<std::map<std::string, std::string>> Database::getInventoryByItemId(int itemId) {
+    ensureConnected(); // 确保连接有效
     std::string query = 
         "SELECT i.id AS inventory_id, i.item_id, il.name AS item_name, "
         "i.quantity, i.location, i.stored_time, i.last_updated "
@@ -605,6 +920,7 @@ std::string Database::safeGet(const std::map<std::string, std::string>& data,
 // 更新库存项目
 bool Database::updateInventoryItem(int inventoryId, int newQuantity, const std::string& newLocation,
                                   const std::string& operationReason) {
+    ensureConnected(); // 确保连接有效
     log("Updating inventory item ID: " + std::to_string(inventoryId));
     if (inventoryId <= 0) {
         log("错误：无效的库存ID: " + std::to_string(inventoryId), true);
@@ -679,6 +995,7 @@ bool Database::updateInventoryItem(int inventoryId, int newQuantity, const std::
 
 // 删除库存项目
 bool Database::deleteInventoryItem(int inventoryId, const std::string& operationReason) {
+    ensureConnected(); // 确保连接有效
     log("Deleting inventory item ID: " + std::to_string(inventoryId));
     
     if (!con || con->isClosed()) {
@@ -733,6 +1050,7 @@ bool Database::deleteInventoryItem(int inventoryId, const std::string& operation
 
 // 获取单个库存项目
 std::vector<std::map<std::string, std::string>> Database::getInventoryItemById(int inventoryId) {
+    ensureConnected(); // 确保连接有效
     if (inventoryId <= 0) {
         log("无效的库存ID: " + std::to_string(inventoryId), true);
         return {};
@@ -758,6 +1076,7 @@ std::vector<std::map<std::string, std::string>> Database::getInventoryItemById(i
 
 // 获取库存总数
 int Database::getTotalInventoryCount() {
+    ensureConnected(); // 确保连接有效
     try {
         log("Executing total inventory count query");
          // 添加连接检查
@@ -793,6 +1112,7 @@ int Database::getTotalInventoryCount() {
 
 // 获取操作日志总数
 int Database::getTotalOperationLogsCount() {
+    ensureConnected(); // 确保连接有效
     try {
         log("Executing total operation logs count query");
         // 确保连接有效
@@ -880,12 +1200,13 @@ void Database::updateDatabaseCredentials(const std::string& host, int port,
         throw std::runtime_error(errorMsg);
     }
 }
-
-std::vector<Database::InventoryItem> Database::getInventoryPaginated(int page, int perPage) {
+std::vector<Database::InventoryItem> Database::getInventoryPaginated(int page, int perPage, const std::string& searchTerm) {
+    ensureConnected(); // 确保连接有效
     std::vector<InventoryItem> items;
     
     try {
-        log("Executing getInventoryPaginated query");
+        log("Executing getInventoryPaginated query with search: " + (searchTerm.empty() ? "(no search)" : searchTerm));
+        
         // 确保连接有效
         if (!con || con->isClosed()) {
             log("Connection closed, attempting to reconnect...");
@@ -896,33 +1217,88 @@ std::vector<Database::InventoryItem> Database::getInventoryPaginated(int page, i
         }
         
         int offset = (page - 1) * perPage;
-        std::stringstream sql;
-        sql << "SELECT i.id, i.item_id, il.name AS item_name, i.quantity, i.location, i.stored_time, i.last_updated "
-            << "FROM inventory i JOIN item_list il ON i.item_id = il.id "
-            << "ORDER BY i.last_updated DESC "
-            << "LIMIT " << perPage << " OFFSET " << offset;
+        std::string baseQuery = 
+            "SELECT i.id, i.item_id, il.name AS item_name, i.quantity, i.location, "
+            "i.stored_time, i.last_updated "
+            "FROM inventory i JOIN item_list il ON i.item_id = il.id ";
         
-        log("SQL: " + sql.str());
+        // 添加搜索条件
+        if (!searchTerm.empty()) {
+            baseQuery += "WHERE il.name LIKE ? OR i.location LIKE ? ";
+        }
         
-        std::unique_ptr<sql::Statement> stmt(con->createStatement());
-        std::unique_ptr<sql::ResultSet> res(stmt->executeQuery(sql.str()));
+        // 添加排序
+        baseQuery += "ORDER BY i.last_updated DESC";
         
-        while (res->next()) {
-            InventoryItem item;
-            item.id = res->getInt("id");
-            item.item_id = res->getInt("item_id");
-            item.item_name = res->getString("item_name");
-            item.quantity = res->getInt("quantity");
-            item.location = res->getString("location");
-            item.stored_time = res->getString("stored_time");
-            item.last_updated = res->getString("last_updated");
-            items.push_back(item);
+        log("SQL: " + baseQuery);
+        
+        if (!searchTerm.empty()) {
+            // 使用预处理语句 - 更安全
+            std::unique_ptr<sql::PreparedStatement> pstmt(con->prepareStatement(baseQuery + " LIMIT ? OFFSET ?"));
+            
+            // 设置搜索参数 (添加%通配符)
+            std::string searchPattern = "%" + searchTerm + "%";
+            pstmt->setString(1, searchPattern);
+            pstmt->setString(2, searchPattern);
+            
+            // 设置分页参数
+            pstmt->setInt(3, perPage);
+            pstmt->setInt(4, offset);
+            
+            // 执行查询
+            std::unique_ptr<sql::ResultSet> res(pstmt->executeQuery());
+            
+            while (res->next()) {
+                InventoryItem item;
+                item.id = res->getInt("id");
+                item.item_id = res->getInt("item_id");
+                item.item_name = res->getString("item_name");
+                item.quantity = res->getInt("quantity");
+                item.location = res->getString("location");
+                item.stored_time = res->getString("stored_time");
+                item.last_updated = res->getString("last_updated");
+                items.push_back(item);
+            }
+        } else {
+            // 没有搜索条件 - 直接拼接分页参数
+            std::string fullQuery = baseQuery + " LIMIT " + std::to_string(perPage) + 
+                                   " OFFSET " + std::to_string(offset);
+            
+            log("Full query: " + fullQuery);
+            
+            std::unique_ptr<sql::Statement> stmt(con->createStatement());
+            std::unique_ptr<sql::ResultSet> res(stmt->executeQuery(fullQuery));
+            
+            while (res->next()) {
+                InventoryItem item;
+                item.id = res->getInt("id");
+                item.item_id = res->getInt("item_id");
+                item.item_name = res->getString("item_name");
+                item.quantity = res->getInt("quantity");
+                item.location = res->getString("location");
+                item.stored_time = res->getString("stored_time");
+                item.last_updated = res->getString("last_updated");
+                items.push_back(item);
+            }
         }
         
         log("Retrieved " + std::to_string(items.size()) + " inventory items");
     } catch (sql::SQLException &e) {
         std::string errorMsg = "MySQL Error in getInventoryPaginated: " + std::string(e.what());
         log(errorMsg, true);
+        
+        // 添加详细错误日志
+        log("SQL error code: " + std::to_string(e.getErrorCode()), true);
+        log("SQL state: " + std::string(e.getSQLState()), true);
+        
+        // 尝试重新连接
+        if (e.getErrorCode() == 2013 || e.getErrorCode() == 2006) { // 连接丢失错误代码
+            log("Attempting to reconnect due to lost connection");
+            if (connect()) {
+                log("Reconnection successful, retrying query");
+                return getInventoryPaginated(page, perPage, searchTerm);
+            }
+        }
     } catch (const std::exception& e) {
         std::string errorMsg = "Error in getInventoryPaginated: " + std::string(e.what());
         log(errorMsg, true);
@@ -930,3 +1306,63 @@ std::vector<Database::InventoryItem> Database::getInventoryPaginated(int page, i
     
     return items;
 }
+
+
+
+void Database::ensureConnected() {
+    std::lock_guard<std::mutex> lock(connectionMutex); // 使用互斥锁
+    
+    // 如果连接不存在或已关闭
+    if (!con || con->isClosed()) {
+        log("连接已断开，尝试重连...");
+        
+        // 优雅地断开现有连接
+        if (con) {
+            try {
+                con->close();
+            } catch (const sql::SQLException& e) {
+                log("关闭连接时出错: " + std::string(e.what()), true);
+            }
+        }
+        
+        // 尝试重连，最多重试3次
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            try {
+                if (connect()) {
+                    log("重连成功!");
+                    return;
+                }
+            } catch (const std::exception& e) {
+                log("重连尝试 " + std::to_string(attempt) + " 失败: " + e.what(), true);
+            }
+            
+            // 指数退避策略
+            std::this_thread::sleep_for(std::chrono::seconds(attempt * 2));
+        }
+        
+        throw std::runtime_error("无法重新连接数据库");
+    }
+    
+    // 如果连接存在，发送保活ping
+    try {
+        log("发送保活PING...");
+        std::unique_ptr<sql::Statement> stmt(con->createStatement());
+        std::unique_ptr<sql::ResultSet> res(stmt->executeQuery("SELECT 1"));
+        if (res->next()) {
+            log("连接状态正常");
+        }
+    } catch (const sql::SQLException& e) {
+        log("保活PING失败: " + std::string(e.what()), true);
+        // 如果ping失败，标记连接为断开
+        if (con) {
+            try {
+                con->close();
+            } catch (...) {
+                // 忽略关闭错误
+            }
+        }
+        con.reset(); // 重置连接
+        throw; // 重新抛出异常
+    }
+}
+

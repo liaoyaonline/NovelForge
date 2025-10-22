@@ -332,3 +332,60 @@ footer {
     background-color: #f8d7da;
     color: #721c24;
 }
+
+/* 添加在文件末尾 */
+#connection-status {
+    position: fixed;
+    bottom: 10px;
+    right: 10px;
+    padding: 8px 15px;
+    border-radius: 20px;
+    background-color: rgba(0, 0, 0, 0.7);
+    color: white;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    z-index: 1000;
+    transition: all 0.3s ease;
+    backdrop-filter: blur(5px);
+}
+
+.status-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 8px;
+}
+
+.status-text {
+    font-weight: 500;
+}
+
+/* 连接状态样式 */
+.connected #connection-status {
+    background-color: rgba(40, 167, 69, 0.8);
+}
+
+.disconnected #connection-status {
+    background-color: rgba(220, 53, 69, 0.8);
+    animation: pulse 1.5s infinite;
+}
+
+.unknown #connection-status {
+    background-color: rgba(108, 117, 125, 0.8);
+}
+
+/* 连接状态动画 */
+@keyframes pulse {
+    0% { opacity: 0.8; }
+    50% { opacity: 0.5; }
+    100% { opacity: 0.8; }
+}
+
+/* 悬停效果 */
+#connection-status:hover {
+    transform: scale(1.05);
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+}
+
