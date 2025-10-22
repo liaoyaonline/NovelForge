@@ -227,3 +227,108 @@ footer {
     padding: 20px;
     color: #7f8c8d;
 }
+/* 模态框样式 */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal-content {
+    background: white;
+    padding: 25px;
+    border-radius: 8px;
+    max-width: 500px;
+    width: 90%;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+}
+
+.modal h2 {
+    margin-bottom: 20px;
+    color: #2c3e50;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 10px;
+}
+
+.modal form div {
+    margin-bottom: 15px;
+}
+
+.modal label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+}
+
+.modal input,
+.modal textarea,
+.modal select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 16px;
+}
+
+.modal textarea {
+    min-height: 100px;
+}
+
+.modal-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+.modal-buttons button {
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.modal-buttons button[type="button"] {
+    background-color: #e0e0e0;
+    border: 1px solid #ccc;
+}
+
+.modal-buttons button[type="submit"] {
+    background-color: #3498db;
+    color: white;
+    border: none;
+}
+
+.modal-buttons button:hover {
+    opacity: 0.9;
+}
+
+/* 操作类型标签 */
+.log-type {
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.log-type-ADD {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.log-type-UPDATE {
+    background-color: #cce5ff;
+    color: #004085;
+}
+
+.log-type-DELETE {
+    background-color: #f8d7da;
+    color: #721c24;
+}

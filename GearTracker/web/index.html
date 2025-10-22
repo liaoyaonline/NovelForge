@@ -73,13 +73,52 @@
             </section>
             
             <section id="logs-section">
-                <h2>操作日志</h2>
+                <div class="section-header">
+                    <h2>操作日志</h2>
+                    <div class="actions">
+                        <button id="refresh-logs">刷新</button>
+                    </div>
+                </div>
+                
+                <div class="filters">
+                    <input type="text" id="search-logs" placeholder="搜索操作类型、物品名称或备注...">
+                    <button id="apply-log-filter">搜索</button>
+                </div>
+                
+                <div class="pagination-controls">
+                    <button id="logs-prev-page">上一页</button>
+                    <span id="logs-page-info">第 1 页，共 1 页</span>
+                    <button id="logs-next-page">下一页</button>
+                    <select id="logs-per-page">
+                        <option value="10" selected>10条/页</option>
+                        <option value="20">20条/页</option>
+                        <option value="50">50条/页</option>
+                    </select>
+                </div>
+                
+                <div class="table-container">
+                    <table id="logs-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>操作类型</th>
+                                <th>物品名称</th>
+                                <th>操作时间</th>
+                                <th>操作说明</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- 动态填充 -->
+                        </tbody>
+                    </table>
+                </div>
+                
                 <div class="loading" id="loading-logs">
                     <div class="spinner"></div>
                     <p>加载中...</p>
                 </div>
-                <p>操作日志功能开发中...</p>
             </section>
+
             
             <section id="settings-section">
                 <h2>系统设置</h2>

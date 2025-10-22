@@ -205,7 +205,23 @@ std::vector<std::map<std::string, std::string>> Database::executeQuery(const std
         
         sql::ResultSetMetaData* meta = res->getMetaData();
         int columns = meta->getColumnCount();
+        // 记录返回的列名
+        std::string columnsList;
+        for (int i = 1; i <= columns; ++i) {
+            if (i > 1) columnsList += ", ";
+            columnsList += meta->getColumnName(i);
+        }
+        log("Query returned columns: " + columnsList);
         
+        // 记录第一行的所有键
+        if (!results.empty()) {
+            std::ostringstream keyStream;
+            keyStream << "First row keys: ";
+            for (const auto& pair : results[0]) {
+                keyStream << pair.first << " | ";
+            }
+            log(keyStream.str());
+        }
         while (res->next()) {
             std::map<std::string, std::string> row;
             for (int i = 1; i <= columns; ++i) {
@@ -221,12 +237,6 @@ std::vector<std::map<std::string, std::string>> Database::executeQuery(const std
                 }
             }
             results.push_back(row);
-        }
-        // 记录返回的列名
-        std::string columnsList;
-        for (int i = 1; i <= columns; ++i) {
-            if (i > 1) columnsList += ", ";
-            columnsList += meta->getColumnName(i);
         }
         log("Query returned columns: " + columnsList);
         log("Query executed successfully, returned " + std::to_string(results.size()) + " rows");
@@ -562,32 +572,44 @@ std::string Database::safeGet(const std::map<std::string, std::string>& data,
     }
     
     // 原始键名检查
-    if (auto it = data.find(actualKey); it != data.end()) {
-        return it->second;
+    std::string value = defaultValue; // 初始化为默认值
+    
+    // 查找顺序：原始键->小写键->原始列名
+    auto it = data.find(actualKey);
+    if (it == data.end()) {
+        std::string lowerKey = actualKey;
+        std::transform(lowerKey.begin(), lowerKey.end(), lowerKey.begin(), 
+                      [](unsigned char c){ return std::tolower(c); });
+        it = data.find(lowerKey);
     }
     
-    // 小写检查
-    std::string lowerKey = actualKey;
-    std::transform(lowerKey.begin(), lowerKey.end(), lowerKey.begin(), 
-                  [](unsigned char c){ return std::tolower(c); });
-    if (auto it = data.find(lowerKey); it != data.end()) {
-        return it->second;
+    if (it == data.end()) {
+        it = data.find(key);
     }
     
-    // 原始列名检查
-    if (auto it = data.find(key); it != data.end()) {
-        return it->second;
+    // 找到值时的处理
+    if (it != data.end()) {
+        value = it->second;
+        
+        // 处理NULL问题：当数据库返回"NULL"字符串时，转换为空字符串
+        if (value == "NULL") {
+            return defaultValue;
+        }
     }
     
-    return defaultValue;
+    return value;
 }
+
 
 // ====== Database.cpp 新增方法实现 ======
 // 更新库存项目
 bool Database::updateInventoryItem(int inventoryId, int newQuantity, const std::string& newLocation,
                                   const std::string& operationReason) {
     log("Updating inventory item ID: " + std::to_string(inventoryId));
-    
+    if (inventoryId <= 0) {
+        log("错误：无效的库存ID: " + std::to_string(inventoryId), true);
+        return false;
+    }
     if (!con || con->isClosed()) {
         log("Connection closed, attempting to reconnect...");
         if (!connect()) {
@@ -598,16 +620,24 @@ bool Database::updateInventoryItem(int inventoryId, int newQuantity, const std::
     
     try {
         // 获取当前库存信息用于日志记录
+        log("查询库存项目 ID: " + std::to_string(inventoryId));
         auto currentItem = getInventoryItemById(inventoryId);
         if (currentItem.empty()) {
             log("Inventory item not found: " + std::to_string(inventoryId), true);
             return false;
         }
         
-        std::string itemName = safeGet(currentItem[0], "item_name");
-        int oldQuantity = std::stoi(safeGet(currentItem[0], "quantity"));
-        std::string oldLocation = safeGet(currentItem[0], "location");
-        
+        std::string itemName = safeGet(currentItem[0], "item_name", "未知物品");
+        std::string oldLocation = safeGet(currentItem[0], "location", "未知位置");
+        // 安全获取旧数量
+        int oldQuantity = 0;
+        try {
+            if (currentItem[0].count("quantity")) {
+                oldQuantity = std::stoi(currentItem[0]["quantity"]);
+            }
+        } catch (const std::exception& e) {
+            log("转换旧数量失败: " + std::string(e.what()), true);
+        }
         std::unique_ptr<sql::PreparedStatement> pstmt(
             con->prepareStatement(
                 "UPDATE inventory SET quantity = ?, location = ? "
@@ -640,7 +670,8 @@ bool Database::updateInventoryItem(int inventoryId, int newQuantity, const std::
             return false;
         }
     } catch (sql::SQLException &e) {
-        std::string errorMsg = "MySQL Error in updateInventoryItem: " + std::string(e.what());
+        std::string errorMsg = "MySQL 更新错误: " + std::string(e.what()) + 
+                              " (错误代码: " + std::to_string(e.getErrorCode()) + ")";
         log(errorMsg, true);
         return false;
     }
@@ -702,14 +733,27 @@ bool Database::deleteInventoryItem(int inventoryId, const std::string& operation
 
 // 获取单个库存项目
 std::vector<std::map<std::string, std::string>> Database::getInventoryItemById(int inventoryId) {
+    if (inventoryId <= 0) {
+        log("无效的库存ID: " + std::to_string(inventoryId), true);
+        return {};
+    }
     std::string query = 
         "SELECT i.id AS inventory_id, i.item_id, il.name AS item_name, "
         "i.quantity, i.location, i.stored_time, i.last_updated "
         "FROM inventory i "
         "JOIN item_list il ON i.item_id = il.id "
         "WHERE i.id = " + std::to_string(inventoryId);
+    log("执行查询: " + query);
+    auto result = executeQuery(query);
     
-    return executeQuery(query);
+    // 添加结果验证
+    if (result.empty()) {
+        log("未找到库存项目: " + std::to_string(inventoryId), true);
+    } else {
+        log("找到库存项目: " + std::to_string(inventoryId));
+    }
+    
+    return result;
 }
 
 // 获取库存总数

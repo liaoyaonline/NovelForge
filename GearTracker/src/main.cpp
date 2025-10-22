@@ -54,7 +54,17 @@ public:
             std::cout << "页码超出范围！有效范围: 1-" << totalPages << std::endl;
         }
     }
-    
+    void setPageSize(int newSize) {
+        pageSize = newSize;
+        totalPages = (totalItems + pageSize - 1) / pageSize;
+        if (totalPages == 0) totalPages = 1;
+        
+        // 如果当前页超过总页数，跳转到最后一页
+        if (currentPage > totalPages) {
+            currentPage = totalPages;
+        }
+    }
+
     int getCurrentPage() const { return currentPage; }
     int getTotalPages() const { return totalPages; }
     int getPageSize() const { return pageSize; }
@@ -87,8 +97,6 @@ void displayInventory(Database& db);
 void displayOperationLogs(Database& db);
 void addItemToInventoryMenu(Database& db);
 void addItemToListMenu(Database& db);
-void modifyInventoryMenu(Database& db);
-void deleteInventoryMenu(Database& db);
 void displayInventoryItem(const std::map<std::string, std::string>& item);
 void configManagementMenu(Database& db);
 void showCurrentConfig(Database& db);
@@ -96,6 +104,8 @@ void modifyDatabaseConfig(Database& db);
 void modifyAppConfig(Database& db);
 void reloadConfig(Database& db);
 void createDefaultConfigIfMissing();
+void deleteInventoryItem(Database& db);
+void modifyInventoryItem(Database& db);
 
 int main() {
     // 创建默认配置（如果需要）
@@ -127,12 +137,10 @@ int main() {
             std::cout << "\n==== 仓库管理系统 ====\n";
             std::cout << "1. 添加新物品到物品列表\n";
             std::cout << "2. 添加物品到库存\n";
-            std::cout << "3. 显示库存物品\n";
-            std::cout << "4. 修改库存项目\n";
-            std::cout << "5. 删除库存项目\n";
-            std::cout << "6. 显示操作记录\n";
-            std::cout << "7. 配置管理\n"; // 新增配置管理
-            std::cout << "8. 退出\n";
+            std::cout << "3. 显示库存物品\n"; // 包含修改和删除功能
+            std::cout << "4. 显示操作记录\n";
+            std::cout << "5. 配置管理\n";
+            std::cout << "6. 退出\n";
             std::cout << "请选择操作: ";
             
             if (std::cin >> choice) {
@@ -141,12 +149,10 @@ int main() {
                 switch (choice) {
                     case 1: addItemToListMenu(db); break;
                     case 2: addItemToInventoryMenu(db); break;
-                    case 3: displayInventory(db); break;
-                    case 4: modifyInventoryMenu(db); break;
-                    case 5: deleteInventoryMenu(db); break;
-                    case 6: displayOperationLogs(db); break;
-                    case 7: configManagementMenu(db); break; // 新增
-                    case 8: running = false; break;
+                    case 3: displayInventory(db); break; // 包含修改和删除
+                    case 4: displayOperationLogs(db); break;
+                    case 5: configManagementMenu(db); break;
+                    case 6: running = false; break;
                     default: std::cout << "无效的选择，请重新输入！\n";
                 }
             } else {
@@ -169,11 +175,10 @@ int main() {
 void displayInventory(Database& db) {
     int pageSize = db.getConfig().getInt("application", "page_size", 10);
     int totalItems = db.getTotalInventoryCount();
-    std::cout << "daiqiongfengtest111:" << totalItems << std::endl;
     PaginationController pagination(totalItems, pageSize);
     
-    bool inPagination = true;
-    while (inPagination) {
+    bool inInventory = true;
+    while (inInventory) {
         auto inventory = db.getInventory(pagination.getCurrentPage(), pagination.getPageSize());
         
         if (inventory.empty()) {
@@ -183,7 +188,13 @@ void displayInventory(Database& db) {
         
         std::cout << "\n==== 库存物品列表 (第" << pagination.getCurrentPage() 
                   << "页/共" << pagination.getTotalPages() << "页) ====\n";
-        // ... 格式代码保持不变 ...
+        std::cout << std::setw(6) << "ID"
+                  << std::setw(8) << "物品ID"
+                  << std::setw(20) << "物品名称"
+                  << std::setw(6) << "数量"
+                  << std::setw(15) << "位置"
+                  << std::setw(20) << "入库时间"
+                  << "最后更新\n";
         
         for (const auto& item : inventory) {
             std::cout << std::setw(6) << Database::safeGet(item, "inventory_id") 
@@ -195,26 +206,38 @@ void displayInventory(Database& db) {
                       << Database::safeGet(item, "last_updated") << "\n";
         }
         
-        // 显示分页导航
-        pagination.displayNavigation();
+        // 显示操作选项
+        std::cout << "\n==== 操作选项 ====";
+        std::cout << "\n(c) 修改库存项目 (d) 删除库存项目";
+        std::cout << "\n(n) 下一页 (p) 上一页 (g) 跳转页码";
+        std::cout << "\n(s) 设置每页数量 (q) 返回主菜单";
+        std::cout << "\n请选择操作: ";
         
-        // 处理用户输入
         std::string input;
         std::getline(std::cin, input);
         
-        if (input == "n") {
+        if (input == "d") {
+            deleteInventoryItem(db);
+        } else if (input == "c") {
+            modifyInventoryItem(db);
+        } else if (input == "n") {
             pagination.nextPage();
         } else if (input == "p") {
             pagination.prevPage();
+        } else if (input == "g") {
+            std::cout << "输入要跳转的页码: ";
+            int page;
+            std::cin >> page;
+            clearInputBuffer();
+            pagination.goToPage(page);
+        } else if (input == "s") {
+            std::cout << "输入每页显示数量: ";
+            int newSize;
+            std::cin >> newSize;
+            clearInputBuffer();
+            pagination.setPageSize(newSize);
         } else if (input == "q") {
-            inPagination = false;
-        } else if (input.rfind("g ", 0) == 0) {
-            try {
-                int page = std::stoi(input.substr(2));
-                pagination.goToPage(page);
-            } catch (...) {
-                std::cout << "无效的页码！" << std::endl;
-            }
+            inInventory = false;
         } else {
             std::cout << "无效的操作！" << std::endl;
         }
@@ -433,143 +456,6 @@ void addItemToListMenu(Database& db) {
 }
 
 
-// ====== 新增库存修改功能 ======
-void modifyInventoryMenu(Database& db) {
-    int inventoryId;
-    std::cout << "\n==== 修改库存项目 ====\n";
-    
-    // 显示当前库存
-    displayInventory(db);
-    
-    // 获取库存ID
-    while (true) {
-        std::cout << "输入要修改的库存项目ID (0返回): ";
-        if (std::cin >> inventoryId) {
-            clearInputBuffer();
-            
-            if (inventoryId == 0) return;
-            
-            auto item = db.getInventoryItemById(inventoryId);
-            if (!item.empty()) {
-                displayInventoryItem(item[0]);
-                break;
-            } else {
-                std::cout << "未找到ID为 " << inventoryId << " 的库存项目！\n";
-            }
-        } else {
-            std::cout << "请输入有效的数字！\n";
-            clearInputBuffer();
-        }
-    }
-    
-    // 获取新数量
-    int newQuantity;
-    while (true) {
-        std::cout << "新数量: ";
-        if (std::cin >> newQuantity) {
-            if (newQuantity <= 0) {
-                std::cout << "数量必须大于0！\n";
-            } else {
-                clearInputBuffer();
-                break;
-            }
-        } else {
-            std::cout << "请输入有效的数字！\n";
-            clearInputBuffer();
-        }
-    }
-    
-    // 获取新位置
-    std::string newLocation;
-    while (true) {
-        std::cout << "新位置: ";
-        std::getline(std::cin, newLocation);
-        
-        if (newLocation.empty()) {
-            std::cout << "位置不能为空！\n";
-        } else {
-            break;
-        }
-    }
-    
-    // 新增：输入操作原因
-    std::string operationReason;
-    std::cout << "操作原因: ";
-    std::getline(std::cin, operationReason);
-    while (operationReason.empty()) {
-        std::cout << "操作原因不能为空，请重新输入: ";
-        std::getline(std::cin, operationReason);
-    }
-    // 确认操作
-    std::string confirm;
-    std::cout << "确认修改库存项目? (y/n): ";
-    std::getline(std::cin, confirm);
-    
-    if (confirm == "y" || confirm == "Y") {
-        // 修改调用，添加操作原因参数
-        if (db.updateInventoryItem(inventoryId, newQuantity, newLocation, operationReason)) {
-            std::cout << "库存项目修改成功！\n";
-        }else {
-            std::cout << "库存项目修改失败！\n";
-        }
-    } else {
-        std::cout << "已取消修改操作。\n";
-    }
-}
-
-// ====== 新增库存删除功能 ======
-void deleteInventoryMenu(Database& db) {
-    int inventoryId;
-    std::cout << "\n==== 删除库存项目 ====\n";
-    
-    // 显示当前库存
-    displayInventory(db);
-    
-    // 获取库存ID
-    while (true) {
-        std::cout << "输入要删除的库存项目ID (0返回): ";
-        if (std::cin >> inventoryId) {
-            clearInputBuffer();
-            
-            if (inventoryId == 0) return;
-            
-            auto item = db.getInventoryItemById(inventoryId);
-            if (!item.empty()) {
-                displayInventoryItem(item[0]);
-                break;
-            } else {
-                std::cout << "未找到ID为 " << inventoryId << " 的库存项目！\n";
-            }
-        } else {
-            std::cout << "请输入有效的数字！\n";
-            clearInputBuffer();
-        }
-    }
-
-    std::string operationReason;
-    std::cout << "操作原因: ";
-    std::getline(std::cin, operationReason);
-    while (operationReason.empty()) {
-        std::cout << "操作原因不能为空，请重新输入: ";
-        std::getline(std::cin, operationReason);
-    }
-    // 确认操作
-    std::string confirm;
-    std::cout << "确认删除库存项目? 此操作不可撤销! (y/n): ";
-    std::getline(std::cin, confirm);
-    
-    if (confirm == "y" || confirm == "Y") {
-        // 修改调用，添加操作原因参数
-        if (db.deleteInventoryItem(inventoryId, operationReason)) {
-            std::cout << "库存项目删除成功！\n";
-        } else {
-            std::cout << "库存项目删除失败！\n";
-        }
-    } else {
-        std::cout << "已取消删除操作。\n";
-    }
-}
-
 // ====== 新增辅助函数：显示单个库存项目 ======
 void displayInventoryItem(const std::map<std::string, std::string>& item) {
     std::cout << "\n==== 库存项目详情 ====\n";
@@ -745,6 +631,134 @@ void createDefaultConfigIfMissing() {
             
             configFile.close();
             std::cout << "已创建默认配置文件 config.ini，请修改其中的数据库凭证后再运行程序。\n";
+        }
+    }
+}
+
+void deleteInventoryItem(Database& db) {
+    int inventoryId;
+    
+    // 获取库存ID
+    while (true) {
+        std::cout << "\n输入要删除的库存项目ID (0取消): ";
+        if (std::cin >> inventoryId) {
+            clearInputBuffer();
+            
+            if (inventoryId == 0) return;
+            
+            auto item = db.getInventoryItemById(inventoryId);
+            if (!item.empty()) {
+                displayInventoryItem(item[0]);
+                
+                // 获取操作原因
+                std::string operationReason;
+                std::cout << "操作原因: ";
+                std::getline(std::cin, operationReason);
+                while (operationReason.empty()) {
+                    std::cout << "操作原因不能为空，请重新输入: ";
+                    std::getline(std::cin, operationReason);
+                }
+                
+                // 确认操作
+                std::string confirm;
+                std::cout << "确认删除库存项目? (y/n): ";
+                std::getline(std::cin, confirm);
+                
+                if (confirm == "y" || confirm == "Y") {
+                    if (db.deleteInventoryItem(inventoryId, operationReason)) {
+                        std::cout << "库存项目删除成功！\n";
+                    } else {
+                        std::cout << "库存项目删除失败！\n";
+                    }
+                } else {
+                    std::cout << "已取消删除操作。\n";
+                }
+                return;
+            } else {
+                std::cout << "未找到ID为 " << inventoryId << " 的库存项目！\n";
+            }
+        } else {
+            std::cout << "请输入有效的数字！\n";
+            clearInputBuffer();
+        }
+    }
+}
+
+void modifyInventoryItem(Database& db) {
+    int inventoryId;
+    
+    // 获取库存ID
+    while (true) {
+        std::cout << "\n输入要修改的库存项目ID (0取消): ";
+        if (std::cin >> inventoryId) {
+            clearInputBuffer();
+            
+            if (inventoryId == 0) return;
+            
+            auto item = db.getInventoryItemById(inventoryId);
+            if (!item.empty()) {
+                displayInventoryItem(item[0]);
+                
+                // 获取新数量
+                int newQuantity;
+                while (true) {
+                    std::cout << "新数量 (当前: " << Database::safeGet(item[0], "quantity") << "): ";
+                    if (std::cin >> newQuantity) {
+                        if (newQuantity <= 0) {
+                            std::cout << "数量必须大于0！\n";
+                        } else {
+                            clearInputBuffer();
+                            break;
+                        }
+                    } else {
+                        std::cout << "请输入有效的数字！\n";
+                        clearInputBuffer();
+                    }
+                }
+                
+                // 获取新位置
+                std::string newLocation;
+                while (true) {
+                    std::cout << "新位置 (当前: " << Database::safeGet(item[0], "location") << "): ";
+                    std::getline(std::cin, newLocation);
+                    
+                    if (newLocation.empty()) {
+                        std::cout << "位置不能为空！\n";
+                    } else {
+                        break;
+                    }
+                }
+                
+                // 获取操作原因
+                std::string operationReason;
+                std::cout << "操作原因: ";
+                std::getline(std::cin, operationReason);
+                while (operationReason.empty()) {
+                    std::cout << "操作原因不能为空，请重新输入: ";
+                    std::getline(std::cin, operationReason);
+                }
+                
+                // 确认操作
+                std::string confirm;
+                std::cout << "确认修改库存项目? (y/n): ";
+                std::getline(std::cin, confirm);
+                
+                if (confirm == "y" || confirm == "Y") {
+                    if (db.updateInventoryItem(inventoryId, newQuantity, newLocation, operationReason)) {
+                        std::cout << "库存项目修改成功！\n";
+                    } else {
+                        std::cout << "库存项目修改失败！\n";
+                    }
+                } else {
+                    std::cout << "已取消修改操作。\n";
+                }
+                return;
+            } else {
+                std::cout << "未找到ID为 " << inventoryId << " 的库存项目！\n";
+            }
+        } else {
+            std::cout << "请输入有效的数字！\n";
+            clearInputBuffer();
         }
     }
 }

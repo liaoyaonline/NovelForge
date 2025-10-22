@@ -31,6 +31,11 @@ Config::Config() : configFilePath(getConfigFilePath()) {
 }
 
 
+// 修改带参构造函数
+Config::Config(const std::string& filePath) : configFilePath(filePath) {
+    reload();
+}
+
 // 新增方法：获取配置文件路径
 std::string Config::getConfigFilePath() {
     // 尝试从环境变量获取配置路径

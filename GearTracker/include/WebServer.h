@@ -4,20 +4,22 @@
 #include <string>
 #include <memory>
 #include <mutex>
-#include <thread> // 包含线程头文件 ✅
+#include <thread>
 #include "httplib.h"
 #include "Database.h"
 
-struct OperationLogEntry {
-    int id;
-    std::string operation_type;
-    std::string item_name;
-    std::time_t operation_time;
-    std::string operation_note;
-};
-
+// 将 OperationLogEntry 定义在类内部
 class WebServer {
 public:
+    // 在类内部定义 OperationLogEntry
+    struct OperationLogEntry {
+        int id;
+        std::string operation_type;
+        std::string item_name;
+        std::string operation_time_str; // 直接存储格式化后的时间字符串
+        std::string operation_note;
+    };
+
     WebServer(int port, Database& db);
     ~WebServer();
     
@@ -31,14 +33,14 @@ public:
     
 private:
     void setupRoutes();
-    std::string getInventoryData(int page, int perPage); // ✅ 修正声明
+    std::string getInventoryData(int page, int perPage);
     std::string getOperationLogs(int page, int perPage);
     std::time_t parseDateTime(const std::string& datetimeStr);
     
     int port_;
     Database& db_;
     std::unique_ptr<httplib::Server> server;
-    std::thread serverThread; // ✅ 添加线程成员
+    std::thread serverThread;
     bool running = false;
     std::mutex serverMutex;
 };

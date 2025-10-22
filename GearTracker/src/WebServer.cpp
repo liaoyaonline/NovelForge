@@ -94,7 +94,108 @@ void WebServer::setupRoutes() {
         // 传递数据库引用给辅助函数
         res.set_content(getOperationLogs(page, perPage), "application/json");
     });
-    
+    // 在 setupRoutes 函数中添加
+    server->Delete("/api/inventory/:id", [this](const httplib::Request &req, httplib::Response &res) {
+        try {
+            int id = std::stoi(req.path_params.at("id"));
+            auto params = json::parse(req.body);
+            std::string reason = params["reason"];
+            
+            if (db_.deleteInventoryItem(id, reason)) {
+                res.set_content(json{{"success", true}, {"message", "删除成功"}}.dump(), "application/json");
+            } else {
+                res.set_content(json{{"success", false}, {"message", "删除失败"}}.dump(), "application/json");
+            }
+        } catch (const std::exception& e) {
+            res.set_content(json{{"success", false}, {"error", e.what()}}.dump(), "application/json");
+        }
+    });
+    // 在 setupRoutes 函数中添加
+    server->Get("/api/inventory/item/:id", [this](const httplib::Request &req, httplib::Response &res) {
+        try {
+            int id = std::stoi(req.path_params.at("id"));
+            auto itemData = db_.getInventoryItemById(id);
+            
+            if (!itemData.empty()) {
+                // 添加详细的调试输出
+                std::ostringstream dataStream;
+                dataStream << "dqftest1Raw item data: ";
+                for (const auto& field : itemData[0]) {
+                    dataStream << field.first << "=" << field.second << " | ";
+                }
+                db_.log(dataStream.str());
+                db_.log("返回库存项目数据: inventory_id=" + itemData[0]["inventory_id"] +
+                        ", item_id=" + itemData[0]["item_id"] +
+                        ", item_name=" + itemData[0]["item_name"]);
+                
+                // 确保使用正确的字段名
+                res.set_content(json{
+                    {"inventory_id", itemData[0]["id"]},  // 使用完整的字段名
+                    {"item_id", itemData[0]["item_id"]},
+                    {"item_name", itemData[0]["name"]},
+                    {"quantity", itemData[0]["quantity"]},
+                    {"location", itemData[0]["location"]}
+                }.dump(), "application/json");
+            } else {
+                res.set_content(json{{"error", "未找到库存项目"}}.dump(), "application/json");
+            }
+        } catch (const std::exception& e) {
+            res.set_content(json{{"error", e.what()}}.dump(), "application/json");
+        }
+    });
+
+
+    server->Put("/api/inventory/:id", [this](const httplib::Request &req, httplib::Response &res) {
+        try {
+            // 安全的ID转换
+            std::string idStr = req.path_params.at("id");
+            db_.log("收到更新请求，库存ID: " + idStr + ", 数据: " + req.body);
+            int id = 0;
+            if (!idStr.empty()) {
+                try {
+                    id = std::stoi(idStr);
+                } catch (const std::invalid_argument& e) {
+                    db_.log("无效的库存ID: " + idStr, true);
+                    res.set_content(json{{"success", false}, {"error", "无效的库存ID"}}.dump(), "application/json");
+                    return;
+                }
+            }
+            
+            // 解析请求体
+            auto params = json::parse(req.body);
+            
+            // 安全的quantity转换
+            int quantity = 0;
+            if (params["quantity"].is_number()) {
+                quantity = params["quantity"];
+            } else if (params["quantity"].is_string()) {
+                try {
+                    quantity = std::stoi(params["quantity"].get<std::string>());
+                } catch (...) {
+                    db_.log("无效的数量值: " + params["quantity"].dump(), true);
+                    res.set_content(json{{"success", false}, {"error", "无效的数量值"}}.dump(), "application/json");
+                    return;
+                }
+            }
+            
+            std::string location = params["location"];
+            std::string reason = params["reason"];
+            
+            // 更新数据库
+            if (db_.updateInventoryItem(id, quantity, location, reason)) {
+                res.set_content(json{{"success", true}, {"message", "更新成功"}}.dump(), "application/json");
+            } else {
+                res.set_content(json{{"success", false}, {"message", "更新失败"}}.dump(), "application/json");
+            }
+        } catch (const std::exception& e) {
+            db_.log("Web API 更新错误: " + std::string(e.what()), true);
+            res.set_content(json{{"success", false}, {"error", e.what()}}.dump(), "application/json");
+        }
+    });
+
+
+
+
     // 其他路由...
 }
 
@@ -137,44 +238,41 @@ std::string WebServer::getInventoryData(int page, int perPage) {
 std::string WebServer::getOperationLogs(int page, int perPage) {
     try {
         auto logs = getOperationLogsPaginated(page, perPage);
-        nlohmann::json result;
+        Json::Value result;
         result["status"] = "success";
         result["page"] = page;
         result["perPage"] = perPage;
         
-        nlohmann::json logsArray = nlohmann::json::array();
+        Json::Value logsArray(Json::arrayValue);
         for (const auto& log : logs) {
-            nlohmann::json logJson;
+            Json::Value logJson;
             logJson["id"] = log.id;
             logJson["operation_type"] = log.operation_type;
             logJson["item_name"] = log.item_name;
-            
-            // 格式化时间
-            char buffer[80];
-            std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", std::localtime(&log.operation_time));
-            logJson["operation_time"] = buffer;
-            
+            logJson["operation_time"] = log.operation_time_str;
             logJson["operation_note"] = log.operation_note;
-            logsArray.push_back(logJson);
+            logsArray.append(logJson);
         }
         result["logs"] = logsArray;
         
         result["totalItems"] = getOperationLogsCount(); 
-        result["totalPages"] = (result["totalItems"].get<int>() + perPage - 1) / perPage;
+        int totalPages = (result["totalItems"].asInt() + perPage - 1) / perPage;
+        if (totalPages == 0) totalPages = 1;
+        result["totalPages"] = totalPages;
         
-        return result.dump();
-        
+        Json::StreamWriterBuilder builder;
+        return Json::writeString(builder, result);
     } catch (const std::exception& e) {
-        nlohmann::json error;
+        Json::Value error;
         error["status"] = "error";
         error["message"] = "获取操作日志失败: " + std::string(e.what());
-        return error.dump();
+        Json::StreamWriterBuilder builder;
+        return Json::writeString(builder, error);
     }
 }
 
-
 // WebServer.cpp
-std::vector<OperationLogEntry> WebServer::getOperationLogsPaginated(int page, int perPage) {
+std::vector<WebServer::OperationLogEntry> WebServer::getOperationLogsPaginated(int page, int perPage) {
     std::vector<OperationLogEntry> logs;
     
     // 使用 Database 已有的方法
@@ -185,7 +283,7 @@ std::vector<OperationLogEntry> WebServer::getOperationLogsPaginated(int page, in
         entry.id = std::stoi(Database::safeGet(record, "id"));
         entry.operation_type = Database::safeGet(record, "operation_type");
         entry.item_name = Database::safeGet(record, "item_name");
-        entry.operation_time = parseDateTime(Database::safeGet(record, "operation_time"));
+        entry.operation_time_str = Database::safeGet(record, "operation_time"); // 直接使用数据库返回的格式化时间
         entry.operation_note = Database::safeGet(record, "operation_note");
         logs.push_back(entry);
     }
