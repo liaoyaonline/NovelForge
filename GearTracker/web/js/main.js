@@ -5,10 +5,17 @@ let totalItems = 0;
 let totalPages = 1;
 
 // 操作日志页面分页状态
-let currentLogPage = 1;   // 修复：添加这个变量
-let perLogPage = 10;      // 修复：添加这个变量
+let currentLogPage = 1;
+let perLogPage = 10;
 let totalLogItems = 0;
 let totalLogPages = 1;
+
+// 添加物品状态管理对象
+let addingItemState = {
+    step: 1,               // 当前步骤 (1:选择物品, 2:物品详情, 3:库存信息)
+    item: null,            // 存储物品信息
+    isNewItem: false       // 标识是否是新增物品
+};
 
 // DOM加载完成后执行
 document.addEventListener('DOMContentLoaded', function() {
@@ -79,13 +86,12 @@ document.addEventListener('DOMContentLoaded', function() {
                     loadLogsData();
                 }, 100);
             });
-            
             // 如果是库存部分，加载数据
             if (section === 'inventory') {
                 loadInventoryData();
             }
             if (section === 'logs') {
-            loadLogsData();
+                loadLogsData();
             }
         });
     });
@@ -118,7 +124,8 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // 添加物品按钮
     document.getElementById('add-item').addEventListener('click', function() {
-        alert('添加物品功能开发中...');
+        resetAddItemForm();
+        document.getElementById('add-item-modal').style.display = 'flex';
     });
     
     // 搜索按钮
@@ -127,8 +134,171 @@ document.addEventListener('DOMContentLoaded', function() {
         loadInventoryData();
     });
     
+    // 物品名称输入实时搜索
+    document.getElementById('item-name').addEventListener('input', function() {
+        const searchTerm = this.value.trim();
+        if (searchTerm.length < 2) {
+            document.getElementById('item-search-results').style.display = 'none';
+            return;
+        }
+        
+        // 调用API搜索物品
+        fetch(`/api/search-items?q=${encodeURIComponent(searchTerm)}`)
+            .then(response => response.json())
+            .then(data => {
+                displaySearchResults(data);
+            })
+            .catch(error => {
+                console.error('搜索物品失败:', error);
+            });
+    });
+    
+    // 步骤1到步骤2的按钮
+    document.getElementById('next-to-step2').addEventListener('click', function() {
+        const itemName = document.getElementById('item-name').value.trim();
+        
+        if (!itemName) {
+            alert('请输入物品名称');
+            return;
+        }
+        
+        // 如果物品已经选择（来自搜索结果），直接进入步骤3
+        if (addingItemState.item) {
+            goToStep(3);
+            return;
+        }
+        
+        // 检查物品是否存在于数据库
+        fetch(`/api/check-item?name=${encodeURIComponent(itemName)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.exists) {
+                    // 物品存在，直接进入步骤3
+                    addingItemState.item = {
+                        id: data.itemId,
+                        name: itemName
+                    };
+                    goToStep(3);
+                } else {
+                    // 物品不存在，进入步骤2填写物品详情
+                    addingItemState.item = {
+                        name: itemName
+                    };
+                    addingItemState.isNewItem = true;
+                    goToStep(2);
+                }
+            })
+            .catch(error => {
+                console.error('检查物品失败:', error);
+                alert('检查物品失败，请重试');
+            });
+    });
+    
+    // 步骤2到步骤1的按钮（上一步）
+    document.getElementById('prev-to-step1').addEventListener('click', function() {
+        goToStep(1);
+    });
+
+    // 步骤2到步骤3的按钮（下一步）
+    document.getElementById('next-to-step3').addEventListener('click', function() {
+        // 验证必填字段
+        const category = document.getElementById('item-category').value.trim();
+        const grade = document.getElementById('item-grade').value.trim();
+        const effect = document.getElementById('item-effect').value.trim();
+        
+        if (!category || !grade || !effect) {
+            alert('请填写所有必填字段');
+            return;
+        }
+        
+        // 更新物品信息
+        addingItemState.item = {
+            name: document.getElementById('item-name').value.trim(),
+            category,
+            grade,
+            effect,
+            description: document.getElementById('item-description').value.trim(),
+            note: document.getElementById('item-note').value.trim()
+        };
+        
+        goToStep(3);
+    });
+    
+    // 步骤3到步骤2的按钮（上一步）
+    document.getElementById('prev-to-step2').addEventListener('click', function() {
+        if (addingItemState.isNewItem) {
+            goToStep(2);
+        } else {
+            goToStep(1);
+        }
+    });
+    
+    // 提交添加物品
+    document.getElementById('submit-add-item').addEventListener('click', function() {
+        const quantity = parseInt(document.getElementById('item-quantity').value);
+        const location = document.getElementById('item-location').value.trim();
+        const reason = document.getElementById('item-reason').value.trim();
+        
+        if (!quantity || quantity <= 0) {
+            alert('请输入有效的数量');
+            return;
+        }
+        
+        if (!location) {
+            alert('请输入物品位置');
+            return;
+        }
+        
+        if (!reason) {
+            alert('请输入操作原因');
+            return;
+        }
+        
+        // 准备数据
+        const requestData = {
+            item: addingItemState.item,
+            quantity,
+            location,
+            reason,
+            isNewItem: addingItemState.isNewItem
+        };
+        
+        // 显示加载状态
+        const submitBtn = document.getElementById('submit-add-item');
+        submitBtn.disabled = true;
+        submitBtn.textContent = '处理中...';
+        
+        // 提交到服务器
+        fetch('/api/add-item', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestData)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('物品添加成功！');
+                document.getElementById('add-item-modal').style.display = 'none';
+                loadInventoryData();
+            } else {
+                alert(`添加失败: ${data.message}`);
+            }
+        })
+        .catch(error => {
+            console.error('添加物品失败:', error);
+            alert('添加物品失败，请重试');
+        })
+        .finally(() => {
+            submitBtn.disabled = false;
+            submitBtn.textContent = '完成';
+        });
+    });
+    
     // 初始加载库存数据
     loadInventoryData();
+    
     // 添加连接状态监控
     function checkConnectionStatus() {
         fetch('/api/connection-status')
@@ -276,7 +446,6 @@ function formatDate(dateString) {
 }
 
 // 编辑物品
-// 修改 editItem 函数
 function editItem(id) {
     // 获取库存项目详情
     if (isNaN(id) || id <= 0) {
@@ -284,7 +453,6 @@ function editItem(id) {
         alert("无效的库存项目");
         return;
     }
-    console.log("开始编辑库存项目，ID:", id); // 添加调试日志
     
     fetch(`/api/inventory/item/${id}`)
         .then(response => response.json())
@@ -293,11 +461,8 @@ function editItem(id) {
                 alert(item.error);
                 return;
             }
-            // 添加日志检查返回的数据
-            console.log("获取的库存项目详情:", item);
             
-            // 确保使用正确的库存ID - 修改这里
-            // 使用 item.inventory_id 而不是 item.id
+            // 确保使用正确的库存ID
             const inventoryId = item.inventory_id || item.id;
             
             // 创建编辑表单
@@ -306,10 +471,8 @@ function editItem(id) {
                     <div style="background:white;padding:20px;border-radius:8px;max-width:500px;width:100%;">
                         <h2>编辑库存项目</h2>
                         <form id="edit-form">
-                            <!-- 关键修改：确保使用正确的库存ID字段 -->
                             <input type="hidden" id="edit-id" value="${inventoryId}">
                             
-                            <!-- 添加库存ID显示 -->
                             <div style="margin-bottom:15px;">
                                 <label style="display:block;margin-bottom:5px;">库存ID:</label>
                                 <input type="text" value="${inventoryId}" disabled style="width:100%;padding:8px;">
@@ -359,14 +522,12 @@ function editItem(id) {
         });
 }
 
-
 function saveEdit() {
     const id = document.getElementById('edit-id').value;
     const quantity = document.getElementById('edit-quantity').value;
     const location = document.getElementById('edit-location').value;
     const reason = document.getElementById('edit-reason').value;
-     // 验证输入
-    // 确保ID有效
+    
     if (!id || id <= 0) {
         alert('无效的库存项目ID');
         return;
@@ -391,7 +552,7 @@ function saveEdit() {
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-            quantity: Number(quantity), // 显式转换为数字
+            quantity: Number(quantity),
             location: location,
             reason: reason
         })
@@ -401,7 +562,7 @@ function saveEdit() {
         if (data.success) {
             alert('更新成功');
             document.getElementById('edit-modal').remove();
-            loadInventoryData(); // 刷新列表
+            loadInventoryData();
         } else {
             alert(`更新失败: ${data.message || '未知错误'}`);
         }
@@ -412,9 +573,7 @@ function saveEdit() {
     });
 }
 
-
 // 删除物品
-// 修改 deleteItem 函数
 function deleteItem(id) {
     const reason = prompt("请输入删除原因：");
     if (reason === null) return; // 用户取消
@@ -431,7 +590,7 @@ function deleteItem(id) {
         .then(data => {
             if (data.success) {
                 alert('删除成功');
-                loadInventoryData(); // 刷新列表
+                loadInventoryData();
             } else {
                 alert(`删除失败: ${data.message || '未知错误'}`);
             }
@@ -443,16 +602,8 @@ function deleteItem(id) {
     }
 }
 
-
-// 修改后的加载日志函数 - 完整搜索功能实现
+// 加载操作日志数据
 function loadLogsData() {
-    console.log("[DEBUG] 开始加载操作日志数据");
-    
-    // 确保分页变量有合理值
-    currentLogPage = currentLogPage || 1;
-    perLogPage = perLogPage || 10;
-    
-    console.log(`[DEBUG] 当前日志页码: ${currentLogPage}, 每页数量: ${perLogPage}`)
     const tableBody = document.getElementById('logs-table').querySelector('tbody');
     const loading = document.getElementById('loading-logs');
     
@@ -460,15 +611,13 @@ function loadLogsData() {
     tableBody.innerHTML = '';
     loading.style.display = 'flex';
     
-    // 获取搜索值（从搜索框获取）
+    // 获取搜索值
     const search = document.getElementById('search-logs').value || '';
     
-    // 构建API URL - 使用全局分页变量
+    // 构建API URL
     const url = `/api/operation_logs?page=${currentLogPage}&perPage=${perLogPage}&search=${encodeURIComponent(search)}`;
     
-    console.log("加载日志数据:", url); // 调试信息
-    
-    // 添加请求取消机制（防止快速切换导致的请求堆积）
+    // 添加请求取消机制
     if (window.logsFetchController) {
         window.logsFetchController.abort();
     }
@@ -482,8 +631,6 @@ function loadLogsData() {
             return response.json();
         })
         .then(data => {
-            console.log("操作日志响应:", data); // 调试信息
-            
             // 清除请求控制器引用
             window.logsFetchController = null;
             
@@ -500,7 +647,7 @@ function loadLogsData() {
                 document.getElementById('logs-prev-page').disabled = currentLogPage <= 1;
                 document.getElementById('logs-next-page').disabled = currentLogPage >= totalLogPages;
                 
-                // 填充表格 - 添加搜索高亮功能
+                // 填充表格
                 if (data.logs && data.logs.length > 0) {
                     const fragment = document.createDocumentFragment();
                     const searchPattern = search ? new RegExp(`(${escapeRegExp(search)})`, 'gi') : null;
@@ -517,7 +664,7 @@ function loadLogsData() {
                             : log.item_name;
                         
                         let highlightedNote = searchPattern 
-                            ? log.operation_note.replace(searchPattern, '<mark>$1</mark>')
+                            ? log.operation_note.replace(searchPattern, '<mark极$1</mark>')
                             : log.operation_note;
                         
                         row.innerHTML = `
@@ -532,7 +679,6 @@ function loadLogsData() {
                     tableBody.appendChild(fragment);
                 } else {
                     const row = document.createElement('tr');
-                    // 智能空状态提示
                     const noResultsText = search 
                         ? `没有找到包含"${search}"的操作记录`
                         : '没有找到操作记录';
@@ -542,25 +688,19 @@ function loadLogsData() {
                 }
             } else {
                 const row = document.createElement('tr');
-                row.innerHTML = `<td colspan="5" style="text-align: center; color: red;">
-                    ${data.message || '加载日志失败'}
-                </td>`;
+                row.innerHTML = `<td colspan="5" style="text-align: center; color: red;">${data.message || '加载日志失败'}</td>`;
                 tableBody.appendChild(row);
-                console.error("日志API错误:", data);
             }
         })
         .catch(error => {
             // 忽略取消请求的错误
             if (error.name === 'AbortError') {
-                console.log('请求被取消');
                 return;
             }
             
             console.error('加载日志失败:', error);
             const row = document.createElement('tr');
-            row.innerHTML = `<td colspan="5" style="text-align: center; color: red;">
-                加载日志失败: ${error.message}
-            </td>`;
+            row.innerHTML = `<td colspan="5" style="text-align: center; color: red;">加载日志失败: ${error.message}</td>`;
             tableBody.appendChild(row);
         })
         .finally(() => {
@@ -573,14 +713,109 @@ function escapeRegExp(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-
-function updateLogsPaginationInfo() {
-    document.getElementById('logs-page-info').textContent = 
-        `第 ${currentLogPage} 页，共 ${totalLogPages} 页 (${totalLogItems} 条记录)`;
+// 重置添加物品表单
+function resetAddItemForm() {
+    console.log("重置添加物品表单");
+    addingItemState = {
+        step: 1,
+        item: null,
+        isNewItem: false
+    };
     
-    // 更新按钮状态
-    document.getElementById('logs-prev-page').disabled = currentLogPage <= 1;
-    document.getElementById('logs-next-page').disabled = currentLogPage >= totalLogPages;
+    document.getElementById('item-name').value = '';
+    document.getElementById('item-category').value = '';
+    document.getElementById('item-grade').value = '';
+    document.getElementById('item-effect').value = '';
+    document.getElementById('item-description').value = '';
+    document.getElementById('item-note').value = '';
+    document.getElementById('item-quantity').value = '1';
+    document.getElementById('item-location').value = '';
+    document.getElementById('item-reason').value = '';
+    
+    // 重置步骤显示
+    document.getElementById('step1-content').classList.add('active');
+    document.getElementById('step2-content').classList.remove('active');
+    document.getElementById('step3-content').classList.remove('active');
+    
+    document.querySelectorAll('.step').forEach(step => step.classList.remove('active'));
+    document.getElementById('step-1').classList.add('active');
+    
+    document.getElementById('item-search-results').innerHTML = '';
+    document.getElementById('item-search-results').style.display = 'none';
 }
 
+// 显示搜索结果
+function displaySearchResults(items) {
+    const resultsContainer = document.getElementById('item-search-results');
+    resultsContainer.innerHTML = '';
+    
+    if (items.length === 0) {
+        resultsContainer.innerHTML = '<div class="search-item">未找到匹配物品</div>';
+        resultsContainer.style.display = 'block';
+        return;
+    }
+    
+    items.forEach(item => {
+        const itemDiv = document.createElement('div');
+        itemDiv.className = 'search-item';
+        itemDiv.dataset.id = item.id;
+        itemDiv.innerHTML = `
+            <div class="item-name">${item.name}</div>
+            <div class="item-details">类别: ${item.category} | 等阶: ${item.grade}</div>
+            <div class="item-details">效果: ${item.effect.substring(0, 50)}${item.effect.length > 50 ? '...' : ''}</div>
+        `;
+        itemDiv.addEventListener('click', function() {
+            selectItem(item);
+        });
+        resultsContainer.appendChild(itemDiv);
+    });
+    
+    resultsContainer.style.display = 'block';
+}
 
+// 选择物品
+function selectItem(item) {
+    addingItemState.item = item;
+    addingItemState.isNewItem = false;
+    document.getElementById('item-name').value = item.name;
+    document.getElementById('item-search-results').style.display = 'none';
+}
+
+// 切换步骤
+function goToStep(step) {
+    console.log(`切换到步骤: ${step}`);
+    addingItemState.step = step;
+    
+    // 更新步骤指示器
+    document.querySelectorAll('.step').forEach((el, index) => {
+        if (index === step - 1) {
+            console.log(`激活步骤指示器: ${index + 1}`);
+            el.classList.add('active');
+        } else {
+            el.classList.remove('active');
+        }
+    });
+    
+    // 更新内容显示
+    document.querySelectorAll('.step-content').forEach(content => {
+        content.classList.remove('active');
+    });
+    
+    const currentStepElement = document.getElementById(`step${step}-content`);
+    if (currentStepElement) {
+        console.log(`显示步骤内容: step${step}-content`);
+        currentStepElement.classList.add('active');
+    } else {
+        console.error(`找不到步骤内容元素: step${step}-content`);
+    }
+    
+    // 如果进入步骤3，填充物品信息（如果是新物品）
+    if (step === 3 && addingItemState.isNewItem) {
+        console.log("填充新物品信息到步骤3");
+        document.getElementById('item-category').value = addingItemState.item.category || '';
+        document.getElementById('item-grade').value = addingItemState.item.grade || '';
+        document.getElementById('item-effect').value = addingItemState.item.effect || '';
+        document.getElementById('item-description').value = addingItemState.item.description || '';
+        document.getElementById('item-note').value = addingItemState.item.note || '';
+    }
+}

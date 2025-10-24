@@ -595,7 +595,9 @@ bool Database::logOperation(const std::string& operationType,
                 "VALUES (?, ?, ?)"
             )
         );
-        
+        std::string opType = operationType;
+        if (opType == "ADD_ITEM") opType = "ADD";
+        else if (opType == "ADD_INVENTORY") opType = "ADD";
         pstmt->setString(1, operationType);
         pstmt->setString(2, itemName);
         pstmt->setString(3, note);
@@ -1366,3 +1368,48 @@ void Database::ensureConnected() {
     }
 }
 
+// ====== 新增：搜索物品 ======
+std::vector<std::map<std::string, std::string>> 
+Database::searchItems(const std::string& query, int limit) {
+    ensureConnected();
+    log("搜索物品: " + query + ", 限制: " + std::to_string(limit));
+    std::vector<std::map<std::string, std::string>> results;
+    
+    if (!con || con->isClosed()) {
+        log("连接已关闭，尝试重新连接...");
+        if (!connect()) {
+            log("无法为searchItems建立连接", true);
+            return results;
+        }
+    }
+    
+    try {
+        // 使用预处理语句防止SQL注入
+        std::unique_ptr<sql::PreparedStatement> pstmt(
+            con->prepareStatement(
+                "SELECT id, name, category, grade, effect, description, note "
+                "FROM item_list "
+                "WHERE name LIKE ? "
+                "ORDER BY name "
+                "LIMIT ?"
+            )
+        );
+        
+        // 添加通配符进行部分匹配
+        std::string searchPattern = "%" + query + "%";
+        pstmt->setString(1, searchPattern);
+        pstmt->setInt(2, limit);
+        
+        std::unique_ptr<sql::ResultSet> res(pstmt->executeQuery());
+        results = parseResultSet(res.get());
+        
+        log("找到 " + std::to_string(results.size()) + " 个匹配物品");
+        return results;
+    } catch (const sql::SQLException& e) {
+        std::ostringstream oss;
+        oss << "MySQL错误在searchItems: [错误代码" << e.getErrorCode() 
+            << ", SQL状态:" << e.getSQLState() << "]: " << e.what();
+        log(oss.str(), true);
+        return {};
+    }
+}

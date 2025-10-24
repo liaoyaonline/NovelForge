@@ -374,5 +374,177 @@ void WebServer::setupRoutes() {
         res.set_content(response.dump(), "application/json");
     });
 
-    // 其他路由...
+    /********************************************************************
+    * 添加物品功能相关API
+    ********************************************************************/
+    
+    // ====== 1. 检查物品是否存在 ======
+    server->Get("/api/check-item", [this](const httplib::Request &req, httplib::Response &res) {
+        Database db(config_);
+        if (!db.testConnection()) {
+            res.status = 500;
+            res.set_content(json{{"error", "无法连接数据库"}}.dump(), "application/json");
+            return;
+        }
+        
+        if (!req.has_param("name")) {
+            res.status = 400;
+            res.set_content(json{{"error", "缺少物品名称参数"}}.dump(), "application/json");
+            return;
+        }
+        
+        std::string itemName = req.get_param_value("name");
+        bool exists = db.itemExistsInList(itemName);
+        int itemId = -1;
+        if (exists) {
+            itemId = db.getItemIdByName(itemName);
+        }
+        
+        nlohmann::json response = {
+            {"exists", exists},
+            {"itemId", itemId}
+        };
+        res.set_content(response.dump(), "application/json");
+    });
+    
+    server->Get("/api/search-items", [this](const httplib::Request &req, httplib::Response &res) {
+        Database db(config_);
+        if (!db.testConnection()) {
+            res.status = 500;
+            res.set_content(json{{"error", "无法连接数据库"}}.dump(), "application/json");
+            return;
+        }
+        
+        if (!req.has_param("q")) {
+            res.status = 400;
+            res.set_content(json{{"error", "缺少搜索参数"}}.dump(), "application/json");
+            return;
+        }
+        
+        std::string query = req.get_param_value("q");
+        
+        try {
+            // 使用参数化查询防止SQL注入
+            sql::Connection* connection = db.getConnection(); // 使用新添加的方法
+            std::unique_ptr<sql::PreparedStatement> pstmt(
+                connection->prepareStatement(
+                    "SELECT id, name, category, grade, effect, description "
+                    "FROM item_list WHERE name LIKE ? "
+                    "ORDER BY name LIMIT 10"
+                )
+            );
+            std::string searchPattern = "%" + query + "%";
+            pstmt->setString(1, searchPattern);
+            
+            std::unique_ptr<sql::ResultSet> result(pstmt->executeQuery());
+            nlohmann::json items = nlohmann::json::array();
+            
+            while (result->next()) {
+                nlohmann::json item;
+                item["id"] = result->getInt("id");
+                item["name"] = result->getString("name");
+                item["category"] = result->getString("category");
+                item["grade"] = result->getString("grade");
+                item["effect"] = result->getString("effect");
+                
+                if (!result->isNull("description")) {
+                    item["description"] = result->getString("description");
+                } else {
+                    item["description"] = "";
+                }
+                
+                items.push_back(item);
+            }
+            
+            res.set_content(items.dump(), "application/json");
+            
+        } catch (sql::SQLException &e) {
+            nlohmann::json error = {
+                {"error", "数据库查询错误"},
+                {"code", e.getErrorCode()},
+                {"message", e.what()}
+            };
+            res.status = 500;
+            res.set_content(error.dump(), "application/json");
+        } catch (const std::exception& e) {
+            nlohmann::json error = {
+                {"error", "搜索物品失败"},
+                {"message", e.what()}
+            };
+            res.status = 500;
+            res.set_content(error.dump(), "application/json");
+        }
+    });
+
+    
+    // ====== 3. 添加物品 ======
+    server->Post("/api/add-item", [this](const httplib::Request &req, httplib::Response &res) {
+        Database db(config_);
+        if (!db.testConnection()) {
+            res.status = 500;
+            res.set_content(json{{"error", "无法连接数据库"}}.dump(), "application/json");
+            return;
+        }
+        
+        try {
+            auto jsonBody = nlohmann::json::parse(req.body);
+            bool isNewItem = jsonBody["isNewItem"];
+            nlohmann::json itemInfo = jsonBody["item"];
+            int quantity = jsonBody["quantity"];
+            std::string location = jsonBody["location"];
+            std::string reason = jsonBody["reason"];
+            
+            int itemId = -1;
+            std::string itemName = itemInfo["name"];
+            
+            // 如果是新物品，先添加到物品列表
+            if (isNewItem) {
+                if (!db.addItemToList(
+                    itemName,
+                    itemInfo["category"].get<std::string>(),
+                    itemInfo["grade"].get<std::string>(),
+                    itemInfo["effect"].get<std::string>(),
+                    itemInfo["description"].get<std::string>(),
+                    itemInfo["note"].get<std::string>(),
+                    reason
+                )) {
+                    nlohmann::json response = {
+                        {"success", false},
+                        {"message", "添加物品到列表失败"}
+                    };
+                    res.set_content(response.dump(), "application/json");
+                    return;
+                }
+                
+                // 获取新添加物品的ID
+                itemId = db.getItemIdByName(itemName);
+                if (itemId <= 0) {
+                    throw std::runtime_error("获取新物品ID失败");
+                }
+            } else {
+                itemId = itemInfo["id"];
+            }
+            
+            // 添加到库存
+            if (db.addItemToInventory(itemId, quantity, location, reason)) {
+                nlohmann::json response = {
+                    {"success", true}
+                };
+                res.set_content(response.dump(), "application/json");
+            } else {
+                nlohmann::json response = {
+                    {"success", false},
+                    {"message", "添加到库存失败"}
+                };
+                res.set_content(response.dump(), "application/json");
+            }
+        } catch (const std::exception& e) {
+            nlohmann::json response = {
+                {"success", false},
+                {"message", e.what()}
+            };
+            res.status = 400;
+            res.set_content(response.dump(), "application/json");
+        }
+    });
 }

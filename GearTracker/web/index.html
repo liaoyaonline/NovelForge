@@ -21,14 +21,88 @@
         
         <main>
             <section id="inventory-section" class="active">
+                <!-- 在库存管理部分的section-header中添加按钮 -->
                 <div class="section-header">
                     <h2>库存管理</h2>
                     <div class="actions">
                         <button id="refresh-inventory">刷新</button>
-                        <button id="add-item">添加物品</button>
+                        <button id="add-item">添加物品</button> <!-- 新增按钮 -->
                     </div>
                 </div>
-                
+
+                <!-- 在页面底部添加添加物品的模态框 -->
+                <div id="add-item-modal" class="modal" style="display: none;">
+                    <div class="modal-content">
+                        <h2>添加物品</h2>
+                        <div class="modal-steps">
+                            <div class="step active" id="step-1">1. 选择物品</div>
+                            <div class="step" id="step-2">2. 物品详情</div>
+                            <div class="step" id="step-3">3. 库存信息</div>
+                        </div>
+                        
+                        <!-- 步骤1：物品选择 -->
+                        <div class="step-content active" id="step1-content">
+                            <div class="form-group">
+                                <label for="item-name">物品名称:</label>
+                                <input type="text" id="item-name" placeholder="输入物品名称">
+                                <div id="item-search-results" class="search-results"></div>
+                            </div>
+                            <div class="form-group">
+                                <button id="next-to-step2">下一步</button>
+                            </div>
+                        </div>
+                        
+                        <!-- 步骤2：物品详情（当物品不存在时显示） -->
+                        <div class="step-content" id="step2-content">
+                            <div class="form-group">
+                                <label for="item-category">种类:</label>
+                                <input type="text" id="item-category" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="item-grade">等阶:</label>
+                                <input type="text" id="item-grade" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="item-effect">效果:</label>
+                                <textarea id="item-effect" required></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label for="item-description">介绍 (可选):</label>
+                                <textarea id="item-description"></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label for="item-note">备注 (可选):</label>
+                                <textarea id="item-note"></textarea>
+                            </div>
+                            <div class="form-group button-group">
+                                <button id="prev-to-step1">上一步</button>
+                                <button id="next-to-step3">下一步</button>
+                            </div>
+                        </div>
+                        
+                        <!-- 步骤3：库存信息 -->
+                        <div class="step-content" id="step3-content">
+                            <div class="form-group">
+                                <label for="item-quantity">数量:</label>
+                                <input type="number" id="item-quantity" min="1" value="1" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="item-location">位置:</label>
+                                <input type="text" id="item-location" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="item-reason">操作原因:</label>
+                                <textarea id="item-reason" required placeholder="请说明添加此物品的原因"></textarea>
+                            </div>
+                            <div class="form-group button-group">
+                                <button id="prev-to-step2">上一步</button>
+                                <button id="submit-add-item">完成</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+
                 <div class="filters">
                     <input type="text" id="search-items" placeholder="搜索物品名称或位置...">
                     <button id="apply-filter">搜索</button>

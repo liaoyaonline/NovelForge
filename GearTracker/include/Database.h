@@ -117,6 +117,13 @@ public:
     explicit Database(Config& config);
     std::vector<std::map<std::string, std::string>> parseResultSet(sql::ResultSet* res);
     void ensureConnected();
+    std::vector<std::map<std::string, std::string>> searchItems(const std::string& query, int limit);
+    
+    // 添加获取连接的方法
+    sql::Connection* getConnection() {
+        ensureConnected();
+        return con.get();
+    }
 
 private:
     std::mutex connectionMutex; // 添加互斥锁定义
