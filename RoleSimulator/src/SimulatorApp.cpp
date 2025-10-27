@@ -274,6 +274,14 @@ void UI::displayCharacterTable(const std::vector<Character>& characters) const {
         std::cout << "  修为: " << ch.cultivation_level 
                   << " (" << ch.cultivation_progress << ")\n";
         
+        if (!ch.talent.empty()) {
+            std::cout << "  天赋: " << ch.talent << "\n";
+        }
+        
+        if (!ch.comment.empty()) {
+            std::cout << "  评论: " << ch.comment << "\n";
+        }
+        
         std::cout << "  技能:\n";
         for (const auto& skill : ch.skills) {
             std::cout << "    - " << skill.name << " (" << skill.stage << " "
@@ -306,6 +314,46 @@ int UI::selectCharacter(const std::vector<Character>& characters) const {
 }
 
 // ResultSaver 实现
+void ResultSaver::saveSimulationResultText(const Character& character,
+                                         const std::string& filename) const {
+    std::ofstream outFile(filename);
+    if (!outFile.is_open()) {
+        std::cerr << "无法保存文本结果到文件: " << filename << '\n';
+        return;
+    }
+    
+    // 格式示例：
+    // 【姓名】：韩江（鳄族）
+    // 【年龄】：0岁/19岁
+    // 【实力】：黑铁
+    // 【修为】：练气一层(171/1000)
+    // 【技能】：微光星幕阵（精通125/400），阵星引气决（精通116/400）
+    // 【天赋】：共生 Lv.1
+    // 【评论】：籍籍无名的虫豸！
+    
+    outFile << "【姓名】：" << character.name << "（" << character.race << "）\n";
+    outFile << "【年龄】：" << character.age << "岁\n";
+    outFile << "【实力】：" << character.power_level << "\n";
+    outFile << "【修为】：" << character.cultivation_level << "(" << character.cultivation_progress << ")\n";
+    
+    // 技能
+    outFile << "【技能】：";
+    for (size_t i = 0; i < character.skills.size(); ++i) {
+        const Skill& skill = character.skills[i];
+        outFile << skill.name << "（" << skill.stage << " " << skill.current_exp << "/" << skill.max_stage_exp << "）";
+        if (i < character.skills.size() - 1) {
+            outFile << "，";
+        }
+    }
+    outFile << "\n";
+    
+    outFile << "【天赋】：" << character.talent << "\n";
+    outFile << "【评论】：" << character.comment << "\n";
+    
+    outFile.close();
+    std::cout << "文本格式推演结果已保存至: " << filename << '\n';
+}
+
 void ResultSaver::saveSimulationResult(const Character& before, 
                                       const Character& after,
                                       const std::string& filename) const {
@@ -316,8 +364,12 @@ void ResultSaver::saveSimulationResult(const Character& before,
     json beforeJson;
     beforeJson["name"] = before.name;
     beforeJson["race"] = before.race;
+    beforeJson["age"] = before.age;
+    beforeJson["power_level"] = before.power_level;
     beforeJson["cultivation_level"] = before.cultivation_level;
     beforeJson["cultivation_progress"] = before.cultivation_progress;
+    beforeJson["talent"] = before.talent;  // 新增
+    beforeJson["comment"] = before.comment; // 新增
     
     json beforeSkills;
     for (const auto& skill : before.skills) {
@@ -331,9 +383,11 @@ void ResultSaver::saveSimulationResult(const Character& before,
     beforeJson["skills"] = beforeSkills;
     result["before"] = beforeJson;
     
-    json afterJson = beforeJson;
+    json afterJson = beforeJson; // 复制基础信息
     afterJson["cultivation_level"] = after.cultivation_level;
     afterJson["cultivation_progress"] = after.cultivation_progress;
+    afterJson["talent"] = after.talent;        // 新增
+    afterJson["comment"] = after.comment;       // 新增
     
     json afterSkills;
     for (const auto& skill : after.skills) {
@@ -369,10 +423,14 @@ void ResultSaver::saveSimulationResult(const Character& before,
     std::ofstream outFile(filename);
     if (outFile.is_open()) {
         outFile << std::setw(4) << result << '\n';
-        std::cout << "推演结果已保存至: " << filename << '\n';
+        std::cout << "JSON格式推演结果已保存至: " << filename << '\n';
     } else {
-        std::cerr << "无法保存结果到文件: " << filename << '\n';
+        std::cerr << "无法保存JSON结果到文件: " << filename << '\n';
     }
+    
+    // 保存文本格式的结果
+    std::string textFilename = filename.substr(0, filename.find_last_of('.')) + ".txt";
+    saveSimulationResultText(after, textFilename);
 }
 // SimulatorApp.cpp
 int UI::characterManagementMenu(std::vector<Character>& characters, DatabaseManager& db) {
@@ -560,6 +618,12 @@ Character UI::createCharacterFromInput() {
     
     std::cout << "修为进度 (格式: 当前值/最大值): ";
     std::getline(std::cin, character.cultivation_progress);
+
+    std::cout << "天赋: ";
+    std::getline(std::cin, character.talent);
+    
+    std::cout << "评论: ";
+    std::getline(std::cin, character.comment);
     
     std::cout << "修为技能: ";
     std::getline(std::cin, character.cultivation_skill);

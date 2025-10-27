@@ -55,11 +55,11 @@ std::vector<Character> DatabaseManager::loadCharacters() {
     
     try {
         sql::Statement* stmt = conn->createStatement();
-        // 移除了 cultivation_total_exp 字段的查询
+        // 添加talent和comment字段查询
         sql::ResultSet* res = stmt->executeQuery(
             "SELECT id, name, race, age, power_level, "
             "cultivation_level, cultivation_progress, "
-            "cultivation_skill "  // 移除了 cultivation_total_exp
+            "cultivation_skill, talent, comment "  // 新增字段
             "FROM characters"
         );
         
@@ -73,6 +73,8 @@ std::vector<Character> DatabaseManager::loadCharacters() {
             ch.cultivation_level = res->getString("cultivation_level");
             ch.cultivation_progress = res->getString("cultivation_progress");
             ch.cultivation_skill = res->getString("cultivation_skill");
+            ch.talent = res->getString("talent");          // 新增
+            ch.comment = res->getString("comment");        // 新增
             
             sql::PreparedStatement* pstmt = conn->prepareStatement(
                 "SELECT name, stage, current_exp, max_stage_exp "
@@ -189,7 +191,7 @@ bool DatabaseManager::saveCharacter(const Character& character) {
     return true;
 }
 
-// 添加更新角色方法
+// 添加更新角色方法 - 修改: 添加talent和comment字段
 bool DatabaseManager::updateCharacter(const Character& character) {
     if (!conn) {
         std::cerr << "数据库未连接" << std::endl;
@@ -200,16 +202,30 @@ bool DatabaseManager::updateCharacter(const Character& character) {
         // 开始事务
         conn->setAutoCommit(false);
         
-        // 1. 更新角色基本信息
+        // 1. 更新角色基本信息 - 添加talent和comment字段
         sql::PreparedStatement* pstmt = conn->prepareStatement(
             "UPDATE characters SET "
+            "name = ?, "
+            "race = ?, "
+            "age = ?, "
+            "power_level = ?, "
             "cultivation_level = ?, "
-            "cultivation_progress = ? "
+            "cultivation_progress = ?, "
+            "cultivation_skill = ?, "
+            "talent = ?, "          // 新增
+            "comment = ? "          // 新增
             "WHERE id = ?"
         );
-        pstmt->setString(1, character.cultivation_level);
-        pstmt->setString(2, character.cultivation_progress);
-        pstmt->setInt(3, character.id);
+        pstmt->setString(1, character.name);
+        pstmt->setString(2, character.race);
+        pstmt->setInt(3, character.age);
+        pstmt->setString(4, character.power_level);
+        pstmt->setString(5, character.cultivation_level);
+        pstmt->setString(6, character.cultivation_progress);
+        pstmt->setString(7, character.cultivation_skill);
+        pstmt->setString(8, character.talent);       // 新增
+        pstmt->setString(9, character.comment);      // 新增
+        pstmt->setInt(10, character.id);             // 注意参数索引增加
         pstmt->executeUpdate();
         delete pstmt;
         
@@ -250,7 +266,7 @@ bool DatabaseManager::updateCharacter(const Character& character) {
     }
 }
 
-// 添加保存历史记录方法
+// 添加保存历史记录方法 - 修改: 添加talent和comment字段
 bool DatabaseManager::saveSimulationHistory(int characterId, 
                                            int days, 
                                            const TimeAllocation& alloc, 
@@ -272,11 +288,17 @@ bool DatabaseManager::saveSimulationHistory(int characterId,
             allocJson["skills"][entry.first] = entry.second;
         }
         
-        // 推演前快照
+        // 推演前快照 - 添加talent和comment
         json beforeJson;
         beforeJson["name"] = before.name;
+        beforeJson["race"] = before.race;
+        beforeJson["age"] = before.age;
+        beforeJson["power_level"] = before.power_level;
         beforeJson["cultivation_level"] = before.cultivation_level;
         beforeJson["cultivation_progress"] = before.cultivation_progress;
+        beforeJson["cultivation_skill"] = before.cultivation_skill;
+        beforeJson["talent"] = before.talent;          // 新增
+        beforeJson["comment"] = before.comment;        // 新增
         for (const auto& skill : before.skills) {
             json skillJson;
             skillJson["name"] = skill.name;
@@ -286,14 +308,24 @@ bool DatabaseManager::saveSimulationHistory(int characterId,
             beforeJson["skills"].push_back(skillJson);
         }
         
-        // 推演后快照
-        json afterJson = beforeJson; // 复制基础信息
+        // 推演后快照 - 添加talent和comment
+        json afterJson;
+        afterJson["name"] = after.name;
+        afterJson["race"] = after.race;
+        afterJson["age"] = after.age;
+        afterJson["power_level"] = after.power_level;
         afterJson["cultivation_level"] = after.cultivation_level;
         afterJson["cultivation_progress"] = after.cultivation_progress;
-        for (size_t i = 0; i < after.skills.size(); i++) {
-            afterJson["skills"][i]["stage"] = after.skills[i].stage;
-            afterJson["skills"][i]["current_exp"] = after.skills[i].current_exp;
-            afterJson["skills"][i]["max_stage_exp"] = after.skills[i].max_stage_exp;
+        afterJson["cultivation_skill"] = after.cultivation_skill;
+        afterJson["talent"] = after.talent;            // 新增
+        afterJson["comment"] = after.comment;          // 新增
+        for (const auto& skill : after.skills) {
+            json skillJson;
+            skillJson["name"] = skill.name;
+            skillJson["stage"] = skill.stage;
+            skillJson["current_exp"] = skill.current_exp;
+            skillJson["max_stage_exp"] = skill.max_stage_exp;
+            afterJson["skills"].push_back(skillJson);
         }
         
         // 插入历史记录
@@ -317,19 +349,18 @@ bool DatabaseManager::saveSimulationHistory(int characterId,
     }
 }
 
-// DatabaseManager.cpp
-// DatabaseManager.cpp
+// 添加角色方法 - 修改: 添加talent和comment字段
 bool DatabaseManager::addCharacter(Character& character) {
     if (!conn) return false;
     
     try {
         conn->setAutoCommit(false);
         
-        // 插入角色基本信息 - 移除 RETURN_GENERATED_KEYS
+        // 插入角色基本信息 - 添加talent和comment字段
         sql::PreparedStatement* pstmt = conn->prepareStatement(
             "INSERT INTO characters (name, race, age, power_level, "
-            "cultivation_level, cultivation_progress, cultivation_skill) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)"
+            "cultivation_level, cultivation_progress, cultivation_skill, talent, comment) " 
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)" 
         );
         pstmt->setString(1, character.name);
         pstmt->setString(2, character.race);
@@ -338,9 +369,11 @@ bool DatabaseManager::addCharacter(Character& character) {
         pstmt->setString(5, character.cultivation_level);
         pstmt->setString(6, character.cultivation_progress);
         pstmt->setString(7, character.cultivation_skill);
+        pstmt->setString(8, character.talent);       // 新增
+        pstmt->setString(9, character.comment);      // 新增
         pstmt->executeUpdate();
         
-        // 获取生成的ID - 使用查询方式替代 getGeneratedKeys()
+        // 获取生成的ID
         delete pstmt;
         pstmt = conn->prepareStatement("SELECT LAST_INSERT_ID() as id");
         sql::ResultSet* rs = pstmt->executeQuery();

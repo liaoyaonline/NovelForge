@@ -46,6 +46,8 @@ public:
     std::string cultivation_skill;  // 用于修为提升的特殊技能
     int cultivation_total_exp = 0;  // 修为总经验值
     std::vector<Skill> skills;      // 角色掌握的技能列表
+    std::string talent;       // 新增天赋字段
+    std::string comment;      // 新增评论字段
 
     // 获取当前修为值（进度条分子）
     int getCultivationValue() const;

@@ -54,6 +54,9 @@ public:
     void saveSimulationResult(const Character& before, 
                              const Character& after,
                              const std::string& filename) const;
+    
+    void saveSimulationResultText(const Character& after,
+                                         const std::string& filename) const;
 };
 
 #endif // SIMULATOR_APP_H

@@ -4,12 +4,11 @@
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
-#include <limits> // 添加limits头文件
+#include <limits>
 
 namespace fs = std::filesystem;
 
-// 新函数：运行模拟器
-void runSimulator(DatabaseManager& db, const Character& selectedChar) {
+void runSimulator(DatabaseManager& db, Character selectedChar) {
     std::cout << "\n已选择角色: " << selectedChar.name << '\n';
     
     auto skillStages = db.loadSkillStages();
@@ -62,8 +61,11 @@ void runSimulator(DatabaseManager& db, const Character& selectedChar) {
     Character resultChar = selectedChar;
     Simulator simulator;
     simulator.simulate(resultChar, skillStages, cultivationStages, skillMultipliers, days, dailyAlloc);
+    
+    // 确保天赋和评论也被传递
     resultChar.talent = selectedChar.talent;
     resultChar.comment = selectedChar.comment;
+    
     std::cout << "\n===== 推演结果对比 =====\n";
     std::cout << "修为: " << selectedChar.cultivation_level << " (" 
               << selectedChar.cultivation_progress << ") → "
@@ -95,14 +97,13 @@ void runSimulator(DatabaseManager& db, const Character& selectedChar) {
                            std::string(timeBuf) + ".json";
     
     saver.saveSimulationResult(selectedChar, resultChar, filename);
-    std::cout << "\n推演完成！结果已保存至: " << filename << '\n';
     
     // 询问用户是否更新到数据库
     std::string choice;
     while (true) {
         std::cout << "\n是否将推演结果更新到数据库? (y/n): ";
         std::cin >> choice;
-        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); // 清除输入缓冲区
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
         
         if (choice == "y" || choice == "Y") {
             // 更新角色信息
