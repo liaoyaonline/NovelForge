@@ -374,3 +374,238 @@ void ResultSaver::saveSimulationResult(const Character& before,
         std::cerr << "无法保存结果到文件: " << filename << '\n';
     }
 }
+// SimulatorApp.cpp
+int UI::characterManagementMenu(std::vector<Character>& characters, DatabaseManager& db) {
+    int choice;
+    do {
+        // 1. 显示所有角色属性表
+        std::cout << "\n===== 角色列表 =====" << std::endl;
+        displayCharacterTable(characters);
+        
+        // 2. 显示操作菜单
+        std::cout << "\n===== 角色管理操作 =====" << std::endl;
+        std::cout << "1. 新增角色" << std::endl;
+        std::cout << "2. 删除角色" << std::endl;
+        std::cout << "3. 修改角色" << std::endl;
+        std::cout << "4. 推演角色" << std::endl;
+        std::cout << "0. 返回主菜单" << std::endl;
+        std::cout << "请选择操作: ";
+        std::cin >> choice;
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        
+        switch (choice) {
+            case 1: {
+                // 新增角色
+                Character newChar = createCharacterFromInput();
+                if (db.addCharacter(newChar)) {
+                    std::cout << "角色创建成功! ID: " << newChar.id << std::endl;
+                    characters = db.loadCharacters(); // 刷新列表
+                } else {
+                    std::cout << "角色创建失败!" << std::endl;
+                }
+                break;
+            }
+            case 2: {
+                // 删除角色
+                if (characters.empty()) {
+                    std::cout << "没有可删除的角色!" << std::endl;
+                    break;
+                }
+                int index = selectCharacter(characters);
+                if (index == -1) break;
+                
+                Character& selectedChar = characters[index];
+                std::cout << "\n确定要删除角色: " << selectedChar.name 
+                          << " (ID: " << selectedChar.id << ")? [y/N]: ";
+                
+                std::string confirm;
+                std::getline(std::cin, confirm);
+                
+                if (confirm == "y" || confirm == "Y") {
+                    if (db.deleteCharacter(selectedChar.id)) {
+                        std::cout << "角色删除成功!" << std::endl;
+                        characters = db.loadCharacters(); // 刷新列表
+                    } else {
+                        std::cout << "角色删除失败!" << std::endl;
+                    }
+                }
+                break;
+            }
+            case 3: {
+                // 修改角色
+                if (characters.empty()) {
+                    std::cout << "没有可编辑的角色!" << std::endl;
+                    break;
+                }
+                int index = selectCharacter(characters);
+                if (index == -1) break;
+                
+                Character selectedChar = characters[index];
+                std::cout << "\n编辑角色: " << selectedChar.name << " (ID: " << selectedChar.id << ")" << std::endl;
+                
+                // 创建编辑表单
+                Character updatedChar = createCharacterFromInput();
+                updatedChar.id = selectedChar.id; // 保持相同ID
+                
+                if (db.updateCharacter(updatedChar)) {
+                    std::cout << "角色更新成功!" << std::endl;
+                    characters = db.loadCharacters(); // 刷新列表
+                } else {
+                    std::cout << "角色更新失败!" << std::endl;
+                }
+                break;
+            }
+            case 4: {
+                // 推演角色
+                if (characters.empty()) {
+                    std::cout << "没有可推演的角色!" << std::endl;
+                    break;
+                }
+                int index = selectCharacter(characters);
+                if (index == -1) break;
+                
+                // 调用推演功能
+                return index; // 返回选中的角色索引
+            }
+            case 0:
+                std::cout << "返回主菜单..." << std::endl;
+                break;
+            default:
+                std::cout << "无效选择，请重新输入!" << std::endl;
+        }
+    } while (choice != 0);
+    
+    return -1;
+}
+void UI::displayCreateCharacterForm(DatabaseManager& db) {
+    std::cout << "\n===== 创建新角色 =====" << std::endl;
+    Character newChar = createCharacterFromInput();
+    
+    if (db.addCharacter(newChar)) {
+        std::cout << "角色创建成功! ID: " << newChar.id << std::endl;
+    } else {
+        std::cout << "角色创建失败!" << std::endl;
+    }
+}
+
+void UI::displayEditCharacterForm(std::vector<Character>& characters, DatabaseManager& db) {
+    if (characters.empty()) {
+        std::cout << "没有可编辑的角色!" << std::endl;
+        return;
+    }
+    
+    displayCharacterTable(characters);
+    int index = selectCharacter(characters);
+    if (index == -1) return;
+    
+    Character& selectedChar = characters[index];
+    std::cout << "\n编辑角色: " << selectedChar.name << " (ID: " << selectedChar.id << ")" << std::endl;
+    
+    // 显示当前信息并获取新输入
+    Character updatedChar = createCharacterFromInput();
+    updatedChar.id = selectedChar.id; // 保持相同ID
+    
+    if (db.updateCharacter(updatedChar)) {
+        std::cout << "角色更新成功!" << std::endl;
+    } else {
+        std::cout << "角色更新失败!" << std::endl;
+    }
+}
+
+void UI::displayDeleteCharacterDialog(std::vector<Character>& characters, DatabaseManager& db) {
+    if (characters.empty()) {
+        std::cout << "没有可删除的角色!" << std::endl;
+        return;
+    }
+    
+    displayCharacterTable(characters);
+    int index = selectCharacter(characters);
+    if (index == -1) return;
+    
+    Character& selectedChar = characters[index];
+    std::cout << "\n确定要删除角色: " << selectedChar.name 
+              << " (ID: " << selectedChar.id << ")? [y/N]: ";
+    
+    std::string confirm;
+    std::getline(std::cin, confirm);
+    
+    if (confirm == "y" || confirm == "Y") {
+        if (db.deleteCharacter(selectedChar.id)) {
+            std::cout << "角色删除成功!" << std::endl;
+        } else {
+            std::cout << "角色删除失败!" << std::endl;
+        }
+    }
+}
+
+Character UI::createCharacterFromInput() {
+    Character character;
+    
+    std::cout << "\n===== 角色信息输入 =====" << std::endl;
+    std::cout << "角色名称: ";
+    std::getline(std::cin, character.name);
+    
+    std::cout << "种族: ";
+    std::getline(std::cin, character.race);
+    
+    std::cout << "年龄: ";
+    std::cin >> character.age;
+    std::cin.ignore();
+    
+    std::cout << "实力等级: ";
+    std::getline(std::cin, character.power_level);
+    
+    std::cout << "修为等级: ";
+    std::getline(std::cin, character.cultivation_level);
+    
+    std::cout << "修为进度 (格式: 当前值/最大值): ";
+    std::getline(std::cin, character.cultivation_progress);
+    
+    std::cout << "修为技能: ";
+    std::getline(std::cin, character.cultivation_skill);
+    
+    // 添加技能
+    std::cout << "\n===== 添加技能 =====" << std::endl;
+    std::cout << "输入技能信息 (技能名称留空结束添加)" << std::endl;
+    while (true) {
+        Skill skill;
+        
+        std::cout << "技能名称 (留空结束): ";
+        std::getline(std::cin, skill.name);
+        if (skill.name.empty()) break;
+        
+        std::cout << "阶段: ";
+        std::getline(std::cin, skill.stage);
+        
+        std::cout << "当前经验值: ";
+        std::cin >> skill.current_exp;
+        
+        std::cout << "阶段最大经验值: ";
+        std::cin >> skill.max_stage_exp;
+        std::cin.ignore(); // 清除输入缓冲区
+        
+        character.skills.push_back(skill);
+    }
+    
+    return character;
+}
+
+Skill UI::createSkillFromInput() {
+    Skill skill;
+    
+    std::cout << "技能名称 (留空结束): ";
+    std::getline(std::cin, skill.name);
+    if (skill.name.empty()) return skill;
+    
+    std::cout << "阶段: ";
+    std::getline(std::cin, skill.stage);
+    
+    std::cout << "当前经验值: ";
+    std::cin >> skill.current_exp;
+    
+    std::cout << "阶段最大经验值: ";
+    std::cin >> skill.max_stage_exp;
+    
+    std::cin.ignore(); // 清除输入缓冲区
+    return skill;
+}

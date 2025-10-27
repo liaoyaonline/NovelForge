@@ -39,6 +39,14 @@ class UI {
 public:
     void displayCharacterTable(const std::vector<Character>& characters) const;
     int selectCharacter(const std::vector<Character>& characters) const;
+    // 角色管理方法
+    int characterManagementMenu(std::vector<Character>& characters, DatabaseManager& db);
+    void displayCreateCharacterForm(DatabaseManager& db);
+    void displayEditCharacterForm(std::vector<Character>& characters, DatabaseManager& db);
+    void displayDeleteCharacterDialog(std::vector<Character>& characters, DatabaseManager& db);
+private:
+    Character createCharacterFromInput();
+    Skill createSkillFromInput();
 };
 
 class ResultSaver {

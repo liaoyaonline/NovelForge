@@ -22,7 +22,8 @@ public:
     std::map<std::string, CultivationStage> loadCultivationStages();
     std::map<std::string, double> loadSkillMultipliers();
     bool saveCharacter(const Character& character);
-
+    bool addCharacter(Character& character);
+    bool deleteCharacter(int characterId);
     // 更新方法
     bool updateCharacter(const Character& character);
     bool saveSimulationHistory(int characterId, 

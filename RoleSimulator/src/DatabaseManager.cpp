@@ -317,3 +317,97 @@ bool DatabaseManager::saveSimulationHistory(int characterId,
     }
 }
 
+// DatabaseManager.cpp
+// DatabaseManager.cpp
+bool DatabaseManager::addCharacter(Character& character) {
+    if (!conn) return false;
+    
+    try {
+        conn->setAutoCommit(false);
+        
+        // 插入角色基本信息 - 移除 RETURN_GENERATED_KEYS
+        sql::PreparedStatement* pstmt = conn->prepareStatement(
+            "INSERT INTO characters (name, race, age, power_level, "
+            "cultivation_level, cultivation_progress, cultivation_skill) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)"
+        );
+        pstmt->setString(1, character.name);
+        pstmt->setString(2, character.race);
+        pstmt->setInt(3, character.age);
+        pstmt->setString(4, character.power_level);
+        pstmt->setString(5, character.cultivation_level);
+        pstmt->setString(6, character.cultivation_progress);
+        pstmt->setString(7, character.cultivation_skill);
+        pstmt->executeUpdate();
+        
+        // 获取生成的ID - 使用查询方式替代 getGeneratedKeys()
+        delete pstmt;
+        pstmt = conn->prepareStatement("SELECT LAST_INSERT_ID() as id");
+        sql::ResultSet* rs = pstmt->executeQuery();
+        if (rs->next()) {
+            character.id = rs->getInt("id");
+        }
+        delete rs;
+        delete pstmt;
+        
+        // 插入技能信息
+        for (const auto& skill : character.skills) {
+            pstmt = conn->prepareStatement(
+                "INSERT INTO skills (character_id, name, stage, current_exp, max_stage_exp) "
+                "VALUES (?, ?, ?, ?, ?)"
+            );
+            pstmt->setInt(1, character.id);
+            pstmt->setString(2, skill.name);
+            pstmt->setString(3, skill.stage);
+            pstmt->setInt(4, skill.current_exp);
+            pstmt->setInt(5, skill.max_stage_exp);
+            pstmt->executeUpdate();
+            delete pstmt;
+        }
+        
+        conn->commit();
+        conn->setAutoCommit(true);
+        return true;
+    } catch (const sql::SQLException &e) {
+        std::cerr << "添加角色时SQL错误: " << e.what() << std::endl;
+        try {
+            conn->rollback();
+        } catch (...) {}
+        return false;
+    }
+}
+
+
+bool DatabaseManager::deleteCharacter(int characterId) {
+    if (!conn) return false;
+    
+    try {
+        conn->setAutoCommit(false);
+        
+        // 删除关联技能
+        sql::PreparedStatement* pstmt = conn->prepareStatement(
+            "DELETE FROM skills WHERE character_id = ?"
+        );
+        pstmt->setInt(1, characterId);
+        pstmt->executeUpdate();
+        delete pstmt;
+        
+        // 删除角色
+        pstmt = conn->prepareStatement(
+            "DELETE FROM characters WHERE id = ?"
+        );
+        pstmt->setInt(1, characterId);
+        int rowsAffected = pstmt->executeUpdate();
+        delete pstmt;
+        
+        conn->commit();
+        conn->setAutoCommit(true);
+        return rowsAffected > 0;
+    } catch (const sql::SQLException &e) {
+        std::cerr << "删除角色时SQL错误: " << e.what() << std::endl;
+        try {
+            conn->rollback();
+        } catch (...) {}
+        return false;
+    }
+}
