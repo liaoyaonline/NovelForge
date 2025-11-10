@@ -1,0 +1,7 @@
+{
+    "host": "192.168.1.6",
+    "user": "vm_liaoya",
+    "password": "123",
+    "database": "item_db",
+    "port": 3306
+}
