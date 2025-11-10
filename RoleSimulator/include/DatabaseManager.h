@@ -15,7 +15,17 @@ private:
 public:
     DatabaseManager();
     ~DatabaseManager();
+    struct SimulationHistory {
+        int id;
+        int character_id;
+        int simulation_days;
+        std::string time_allocation;
+        std::string before_snapshot;
+        std::string after_snapshot;
+        std::string created_at;
+    };
     
+    std::vector<SimulationHistory> loadSimulationHistory(int characterId);
     bool connect(const std::string& configPath);
     std::vector<Character> loadCharacters();
     std::map<std::string, SkillStage> loadSkillStages();

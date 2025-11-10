@@ -42,7 +42,7 @@ TimeAllocation InputHandler::getDailyTimeAllocation(const Character& character) 
     const float maxDailyHours = 24.0f;
     
     std::cout << "\n===== 每日时间分配 =====" << std::endl;
-    std::cout << "请为以下技能分配时间 (单位:小时，一天最多24小时)：\n";
+    std::cout << "请为以下技能分配时间 (单位:小时，无时间上限):\n";
     
     // 为每个技能分配时间
     for (const auto& skill : character.skills) {
@@ -66,8 +66,6 @@ TimeAllocation InputHandler::getDailyTimeAllocation(const Character& character) 
             
             if (hours < 0) {
                 std::cout << "时间不能为负数，请重新输入。\n";
-            } else if (totalHours + hours > maxDailyHours) {
-                std::cout << "总时间已超过24小时，请调整分配。\n";
             } else {
                 alloc.skillHours[skillName] = hours;
                 totalHours += hours;
@@ -89,8 +87,6 @@ TimeAllocation InputHandler::getDailyTimeAllocation(const Character& character) 
         
         if (restHours < 0) {
             std::cout << "时间不能为负数，请重新输入。\n";
-        } else if (totalHours + restHours > maxDailyHours) {
-            std::cout << "总时间已超过24小时，请调整分配。\n";
         } else {
             alloc.restHours = restHours;
             totalHours += restHours;
@@ -446,6 +442,7 @@ int UI::characterManagementMenu(std::vector<Character>& characters, DatabaseMana
         std::cout << "2. 删除角色" << std::endl;
         std::cout << "3. 修改角色" << std::endl;
         std::cout << "4. 推演角色" << std::endl;
+        std::cout << "5. 查看历史推演记录" << std::endl; // 新增选项
         std::cout << "0. 返回主菜单" << std::endl;
         std::cout << "请选择操作: ";
         std::cin >> choice;
@@ -498,19 +495,14 @@ int UI::characterManagementMenu(std::vector<Character>& characters, DatabaseMana
                 int index = selectCharacter(characters);
                 if (index == -1) break;
                 
-                Character selectedChar = characters[index];
-                std::cout << "\n编辑角色: " << selectedChar.name << " (ID: " << selectedChar.id << ")" << std::endl;
+                // 创建编辑对象（复制而不是引用）
+                Character editChar = characters[index];
                 
-                // 创建编辑表单
-                Character updatedChar = createCharacterFromInput();
-                updatedChar.id = selectedChar.id; // 保持相同ID
+                // 显示编辑菜单
+                displayEditCharacterMenu(editChar, db);
                 
-                if (db.updateCharacter(updatedChar)) {
-                    std::cout << "角色更新成功!" << std::endl;
-                    characters = db.loadCharacters(); // 刷新列表
-                } else {
-                    std::cout << "角色更新失败!" << std::endl;
-                }
+                // 更新列表
+                characters = db.loadCharacters();
                 break;
             }
             case 4: {
@@ -524,6 +516,23 @@ int UI::characterManagementMenu(std::vector<Character>& characters, DatabaseMana
                 
                 // 调用推演功能
                 return index; // 返回选中的角色索引
+            }
+            case 5: {
+                // 查看历史推演记录
+                if (characters.empty()) {
+                    std::cout << "没有可用角色!" << std::endl;
+                    break;
+                }
+                int index = selectCharacter(characters);
+                if (index == -1) break;
+                
+                // 加载历史记录
+                std::vector<DatabaseManager::SimulationHistory> historyList = 
+                    db.loadSimulationHistory(characters[index].id);
+                
+                // 显示历史记录
+                displaySimulationHistory(historyList);
+                break;
             }
             case 0:
                 std::cout << "返回主菜单..." << std::endl;
@@ -671,5 +680,278 @@ Skill UI::createSkillFromInput() {
     std::cin >> skill.max_stage_exp;
     
     std::cin.ignore(); // 清除输入缓冲区
+    return skill;
+}
+
+// SimulatorApp.cpp
+void UI::displaySimulationHistory(const std::vector<DatabaseManager::SimulationHistory>& historyList) {
+    if (historyList.empty()) {
+        std::cout << "该角色没有历史推演记录。\n";
+        return;
+    }
+    
+    std::cout << "\n===== 历史推演记录 =====\n";
+    for (size_t i = 0; i < historyList.size(); i++) {
+        const auto& history = historyList[i];
+        std::cout << "[" << i+1 << "] " << history.created_at 
+                  << " - 推演天数: " << history.simulation_days 
+                  << " - ID: " << history.id << "\n";
+    }
+    
+    std::cout << "\n输入记录编号查看详情 (0返回): ";
+    int choice;
+    std::cin >> choice;
+    std::cin.ignore();
+    
+    if (choice > 0 && choice <= static_cast<int>(historyList.size())) {
+        const auto& history = historyList[choice-1];
+        
+        // 解析JSON
+        using json = nlohmann::json;
+        try {
+            json timeAlloc = json::parse(history.time_allocation);
+            json before = json::parse(history.before_snapshot);
+            json after = json::parse(history.after_snapshot);
+            
+            std::cout << "\n===== 推演详情 #" << history.id << " =====";
+            std::cout << "\n推演日期: " << history.created_at;
+            std::cout << "\n推演天数: " << history.simulation_days;
+            
+            std::cout << "\n\n时间分配:";
+            std::cout << "\n  休息时间: " << timeAlloc["restHours"].get<double>() << "小时";
+            if (timeAlloc.contains("skills")) {
+                std::cout << "\n  技能训练:";
+                for (auto& [skill, hours] : timeAlloc["skills"].items()) {
+                    std::cout << "\n    - " << skill << ": " << hours.get<double>() << "小时";
+                }
+            }
+            
+            std::cout << "\n\n推演前状态:";
+            std::cout << "\n  修为: " << before["cultivation_level"].get<std::string>() 
+                      << " (" << before["cultivation_progress"].get<std::string>() << ")";
+            std::cout << "\n  技能:";
+            for (auto& skill : before["skills"]) {
+                std::cout << "\n    - " << skill["name"].get<std::string>() << ": "
+                          << skill["stage"].get<std::string>() << " "
+                          << skill["current_exp"].get<int>() << "/"
+                          << skill["max_stage_exp"].get<int>();
+            }
+            
+            std::cout << "\n\n推演后状态:";
+            std::cout << "\n  修为: " << after["cultivation_level"].get<std::string>() 
+                      << " (" << after["cultivation_progress"].get<std::string>() << ")";
+            std::cout << "\n  技能:";
+            for (auto& skill : after["skills"]) {
+                std::cout << "\n    - " << skill["name"].get<std::string>() << ": "
+                          << skill["stage"].get<std::string>() << " "
+                          << skill["current_exp"].get<int>() << "/"
+                          << skill["max_stage_exp"].get<int>();
+            }
+            
+            std::cout << "\n\n------------------------------------\n";
+        } catch (const std::exception& e) {
+            std::cerr << "解析历史记录失败: " << e.what() << std::endl;
+        }
+    }
+}
+
+// SimulatorApp.cpp
+
+void UI::displayEditCharacterMenu(Character& character, DatabaseManager& db) {
+    int choice;
+    do {
+        std::cout << "\n===== 编辑角色: " << character.name << " =====" << std::endl;
+        std::cout << "1. 修改基本信息" << std::endl;
+        std::cout << "2. 修改修为信息" << std::endl;
+        std::cout << "3. 修改天赋和评论" << std::endl;
+        std::cout << "4. 修改技能列表" << std::endl;
+        std::cout << "0. 保存并返回" << std::endl;
+        std::cout << "请选择要修改的内容: ";
+        std::cin >> choice;
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        
+        switch (choice) {
+            case 1:
+                editBasicInfo(character);
+                break;
+            case 2:
+                editCultivation(character);
+                break;
+            case 3:
+                editTalentAndComment(character);
+                break;
+            case 4:
+                editSkills(character);
+                break;
+            case 0:
+                // 保存修改到数据库
+                if (db.updateCharacter(character)) {
+                    std::cout << "角色更新成功!" << std::endl;
+                } else {
+                    std::cout << "角色更新失败!" << std::endl;
+                }
+                return;
+            default:
+                std::cout << "无效选择，请重新输入!" << std::endl;
+        }
+    } while (true);
+}
+
+void UI::editBasicInfo(Character& character) {
+    std::cout << "\n===== 修改基本信息 =====" << std::endl;
+    
+    std::string input;
+    std::cout << "当前名字: " << character.name << "\n新名字 (留空保持不变): ";
+    std::getline(std::cin, input);
+    if (!input.empty()) character.name = input;
+    
+    std::cout << "当前种族: " << character.race << "\n新种族 (留空保持不变): ";
+    std::getline(std::cin, input);
+    if (!input.empty()) character.race = input;
+    
+    std::cout << "当前年龄: " << character.age << "\n新年龄 (输入数字，或-1保持不变): ";
+    int newAge;
+    if (std::cin >> newAge && newAge >= 0) {
+        character.age = newAge;
+    }
+    std::cin.ignore();
+}
+
+void UI::editCultivation(Character& character) {
+    std::cout << "\n===== 修改修为信息 =====" << std::endl;
+    
+    std::string input;
+    std::cout << "当前境界: " << character.cultivation_level 
+              << "\n新境界 (留空保持不变): ";
+    std::getline(std::cin, input);
+    if (!input.empty()) character.cultivation_level = input;
+    
+    std::cout << "当前进度: " << character.cultivation_progress 
+              << "\n新进度 (格式: 当前值/最大值，留空保持不变): ";
+    std::getline(std::cin, input);
+    if (!input.empty()) character.cultivation_progress = input;
+    
+    std::cout << "当前修为技能: " << character.cultivation_skill 
+              << "\n新修为技能 (留空保持不变): ";
+    std::getline(std::cin, input);
+    if (!input.empty()) character.cultivation_skill = input;
+}
+
+void UI::editTalentAndComment(Character& character) {
+    std::cout << "\n===== 修改天赋和评论 =====" << std::endl;
+    
+    std::string input;
+    std::cout << "当前天赋: " << character.talent << "\n新天赋 (留空保持不变): ";
+    std::getline(std::cin, input);
+    if (!input.empty()) character.talent = input;
+    
+    std::cout << "当前评论: " << character.comment << "\n新评论 (留空保持不变): ";
+    std::getline(std::cin, input);
+    if (!input.empty()) character.comment = input;
+}
+
+void UI::editSkills(Character& character) {
+    int choice;
+    do {
+        std::cout << "\n===== 当前技能列表 =====" << std::endl;
+        for (size_t i = 0; i < character.skills.size(); i++) {
+            const Skill& skill = character.skills[i];
+            std::cout << "[" << i+1 << "] " << skill.name 
+                      << " - " << skill.stage 
+                      << " " << skill.current_exp << "/" << skill.max_stage_exp
+                      << std::endl;
+        }
+        
+        std::cout << "\n===== 技能操作 =====" << std::endl;
+        std::cout << "1. 修改技能" << std::endl;
+        std::cout << "2. 新增技能" << std::endl;
+        std::cout << "3. 删除技能" << std::endl;
+        std::cout << "0. 返回" << std::endl;
+        std::cout << "请选择操作: ";
+        std::cin >> choice;
+        std::cin.ignore();
+        
+        if (choice == 1 && !character.skills.empty()) {
+            std::cout << "选择要修改的技能编号 (1-" << character.skills.size() << "): ";
+            int skillIndex;
+            std::cin >> skillIndex;
+            std::cin.ignore();
+            
+            if (skillIndex >= 1 && skillIndex <= static_cast<int>(character.skills.size())) {
+                Skill& skill = character.skills[skillIndex-1];
+                Skill newSkill = editSkill(skill);
+                skill = newSkill;
+            } else {
+                std::cout << "无效的技能编号!" << std::endl;
+            }
+        } else if (choice == 2) {
+            Skill newSkill;
+            std::cout << "\n===== 新增技能 =====" << std::endl;
+            std::cout << "技能名称: ";
+            std::getline(std::cin, newSkill.name);
+            
+            std::cout << "阶段: ";
+            std::getline(std::cin, newSkill.stage);
+            
+            std::cout << "当前经验值: ";
+            std::cin >> newSkill.current_exp;
+            
+            std::cout << "阶段最大经验值: ";
+            std::cin >> newSkill.max_stage_exp;
+            std::cin.ignore();
+            
+            character.skills.push_back(newSkill);
+            std::cout << "新增技能成功!" << std::endl;
+        } else if (choice == 3 && !character.skills.empty()) {
+            std::cout << "选择要删除的技能编号 (1-" << character.skills.size() << "): ";
+            int skillIndex;
+            std::cin >> skillIndex;
+            std::cin.ignore();
+            
+            if (skillIndex >= 1 && skillIndex <= static_cast<int>(character.skills.size())) {
+                std::cout << "确定要删除技能 '" << character.skills[skillIndex-1].name << "'? [y/N]: ";
+                std::string confirm;
+                std::getline(std::cin, confirm);
+                
+                if (confirm == "y" || confirm == "Y") {
+                    character.skills.erase(character.skills.begin() + skillIndex - 1);
+                    std::cout << "技能删除成功!" << std::endl;
+                }
+            } else {
+                std::cout << "无效的技能编号!" << std::endl;
+            }
+        } else if (choice != 0) {
+            std::cout << "无效选择，请重新输入!" << std::endl;
+        }
+    } while (choice != 0);
+}
+
+Skill UI::editSkill(const Skill& original) {
+    Skill skill = original;
+    
+    std::cout << "\n===== 修改技能: " << skill.name << " =====" << std::endl;
+    
+    std::string input;
+    std::cout << "当前名称: " << skill.name << "\n新名称 (留空保持不变): ";
+    std::getline(std::cin, input);
+    if (!input.empty()) skill.name = input;
+    
+    std::cout << "当前阶段: " << skill.stage << "\n新阶段 (留空保持不变): ";
+    std::getline(std::cin, input);
+    if (!input.empty()) skill.stage = input;
+    
+    std::cout << "当前经验值: " << skill.current_exp << "\n新经验值 (输入数字，或-1保持不变): ";
+    int newExp;
+    if (std::cin >> newExp && newExp >= 0) {
+        skill.current_exp = newExp;
+    }
+    std::cin.ignore();
+    
+    std::cout << "当前最大经验值: " << skill.max_stage_exp << "\n新最大经验值 (输入数字，或-1保持不变): ";
+    if (std::cin >> newExp && newExp >= 0) {
+        skill.max_stage_exp = newExp;
+    }
+    std::cin.ignore();
+    
     return skill;
 }

@@ -444,3 +444,43 @@ bool DatabaseManager::deleteCharacter(int characterId) {
         return false;
     }
 }
+
+
+// DatabaseManager.cpp
+std::vector<DatabaseManager::SimulationHistory> DatabaseManager::loadSimulationHistory(int characterId) {
+    std::vector<SimulationHistory> historyList;
+    if (!conn) return historyList;
+    
+    try {
+        sql::PreparedStatement* pstmt = conn->prepareStatement(
+            "SELECT id, character_id, simulation_days, "
+            "JSON_EXTRACT(time_allocation, '$') AS time_allocation, "
+            "JSON_EXTRACT(before_snapshot, '$') AS before_snapshot, "
+            "JSON_EXTRACT(after_snapshot, '$') AS after_snapshot, "
+            "created_at "
+            "FROM simulation_history "
+            "WHERE character_id = ? "
+            "ORDER BY created_at DESC"
+        );
+        pstmt->setInt(1, characterId);
+        sql::ResultSet* res = pstmt->executeQuery();
+        
+        while (res->next()) {
+            SimulationHistory history;
+            history.id = res->getInt("id");
+            history.character_id = res->getInt("character_id");
+            history.simulation_days = res->getInt("simulation_days");
+            history.time_allocation = res->getString("time_allocation");
+            history.before_snapshot = res->getString("before_snapshot");
+            history.after_snapshot = res->getString("after_snapshot");
+            history.created_at = res->getString("created_at");
+            historyList.push_back(history);
+        }
+        
+        delete res;
+        delete pstmt;
+    } catch (const sql::SQLException &e) {
+        std::cerr << "加载历史记录时SQL错误: " << e.what() << std::endl;
+    }
+    return historyList;
+}
