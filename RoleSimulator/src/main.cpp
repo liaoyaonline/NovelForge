@@ -4,21 +4,16 @@
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
-#include <limits> // 添加limits头文件
+#include <limits>
 
 namespace fs = std::filesystem;
 
-// 新函数：运行模拟器
+// 修改后的运行模拟器函数
 void runSimulator(DatabaseManager& db, const Character& selectedChar) {
     std::cout << "\n已选择角色: " << selectedChar.name << '\n';
     
     auto skillStages = db.loadSkillStages();
     auto cultivationStages = db.loadCultivationStages();
-
-    // 计算修为总经验
-    Character tempChar = selectedChar;
-    tempChar.calculateTotalExp(cultivationStages);
-    
     auto skillMultipliers = db.loadSkillMultipliers();
     
     if (skillStages.empty() || cultivationStages.empty() || skillMultipliers.empty()) {
@@ -26,14 +21,23 @@ void runSimulator(DatabaseManager& db, const Character& selectedChar) {
         return;
     }
     
-    if (selectedChar.cultivation_skill.empty()) {
+    // 创建临时角色副本并计算初始总经验
+    Character startChar = selectedChar;
+    startChar.calculateTotalExp(cultivationStages);
+    
+    // 显示初始修为信息
+    std::cout << "初始修为: " << startChar.cultivation_level 
+              << " (" << startChar.cultivation_progress << ")"
+              << " [总经验: " << startChar.cultivation_total_exp << "]\n";
+    
+    if (startChar.cultivation_skill.empty()) {
         std::cerr << "错误: 该角色未指定修为技能!\n";
         return;
     }
     
     bool cultivationSkillFound = false;
-    for (const auto& skill : selectedChar.skills) {
-        if (skill.name == selectedChar.cultivation_skill) {
+    for (const auto& skill : startChar.skills) {
+        if (skill.name == startChar.cultivation_skill) {
             cultivationSkillFound = true;
             auto multIt = skillMultipliers.find(skill.stage);
             if (multIt != skillMultipliers.end()) {
@@ -45,35 +49,43 @@ void runSimulator(DatabaseManager& db, const Character& selectedChar) {
     }
     
     if (!cultivationSkillFound) {
-        std::cerr << "错误: 指定的修为技能 '" << selectedChar.cultivation_skill 
+        std::cerr << "错误: 指定的修为技能 '" << startChar.cultivation_skill 
                   << "' 不在角色技能列表中!\n";
         return;
     }
     
-    auto stageIt = cultivationStages.find(selectedChar.cultivation_level);
+    auto stageIt = cultivationStages.find(startChar.cultivation_level);
     if (stageIt == cultivationStages.end()) {
-        std::cerr << "警告: 未知的修为阶段 '" << selectedChar.cultivation_level << "'\n";
+        std::cerr << "警告: 未知的修为阶段 '" << startChar.cultivation_level << "'\n";
     }
     
     InputHandler input;
     int days = input.getSimulationDays();
-    TimeAllocation dailyAlloc = input.getDailyTimeAllocation(selectedChar);
+    TimeAllocation dailyAlloc = input.getDailyTimeAllocation(startChar);
     
-    Character resultChar = selectedChar;
+    // 使用正确的初始经验创建结果角色
+    Character resultChar = startChar;
+    
     Simulator simulator;
     simulator.simulate(resultChar, skillStages, cultivationStages, skillMultipliers, days, dailyAlloc);
-    resultChar.talent = selectedChar.talent;
-    resultChar.comment = selectedChar.comment;
+    
+    // 确保天赋和评论也被传递
+    resultChar.talent = startChar.talent;
+    resultChar.comment = startChar.comment;
+    
+    // 更新修为进度显示
+    resultChar.updateCultivationProgress(cultivationStages);
+    
     std::cout << "\n===== 推演结果对比 =====\n";
-    std::cout << "修为: " << selectedChar.cultivation_level << " (" 
-              << selectedChar.cultivation_progress << ") → "
+    std::cout << "修为: " << startChar.cultivation_level << " (" 
+              << startChar.cultivation_progress << ") → "
               << resultChar.cultivation_level << " (" 
               << resultChar.cultivation_progress << ")" 
-              << " [总经验: " << tempChar.cultivation_total_exp 
+              << " [总经验: " << startChar.cultivation_total_exp 
               << " → " << resultChar.cultivation_total_exp << "]\n";
     
-    for (size_t i = 0; i < selectedChar.skills.size(); i++) {
-        const auto& origSkill = selectedChar.skills[i];
+    for (size_t i = 0; i < startChar.skills.size(); i++) {
+        const auto& origSkill = startChar.skills[i];
         const auto& newSkill = resultChar.skills[i];
         
         std::cout << "技能 [" << origSkill.name << "]: "
@@ -91,10 +103,10 @@ void runSimulator(DatabaseManager& db, const Character& selectedChar) {
     std::strftime(timeBuf, sizeof(timeBuf), "%Y%m%d_%H%M%S", std::localtime(&now));
     
     std::string filename = resultDir.string() + "/" + 
-                           selectedChar.name + "_" + 
+                           startChar.name + "_" + 
                            std::string(timeBuf) + ".json";
     
-    saver.saveSimulationResult(selectedChar, resultChar, filename);
+    saver.saveSimulationResult(startChar, resultChar, filename);
     std::cout << "\n推演完成！结果已保存至: " << filename << '\n';
     
     // 询问用户是否更新到数据库
@@ -110,7 +122,7 @@ void runSimulator(DatabaseManager& db, const Character& selectedChar) {
                 std::cout << "角色信息更新成功!" << std::endl;
                 
                 // 保存历史记录
-                if (db.saveSimulationHistory(resultChar.id, days, dailyAlloc, selectedChar, resultChar)) {
+                if (db.saveSimulationHistory(resultChar.id, days, dailyAlloc, startChar, resultChar)) {
                     std::cout << "历史记录保存成功!" << std::endl;
                 } else {
                     std::cerr << "保存历史记录失败!" << std::endl;

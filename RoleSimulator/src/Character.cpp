@@ -1,6 +1,7 @@
 #include "Character.h"
 #include <cctype> // 用于 isdigit
 #include <stdexcept> // 包含标准异常头文件
+#include <iostream> // 添加用于调试输出
 
 int Character::getCultivationValue() const {
     try {
@@ -90,6 +91,23 @@ void Character::updateCultivationProgress(const std::map<std::string, Cultivatio
 
 void Character::calculateTotalExp(const std::map<std::string, CultivationStage>& stages) {
     try {
+        // 如果已经计算过总经验（非零值），并且进度与总经验一致，则跳过计算
+        if (cultivation_total_exp > 0) {
+            int currentValue = getCultivationValue();
+            int minExp = getCurrentStageMinExp(stages);
+            int calculatedTotalExp = minExp + currentValue;
+            
+            // 调试日志：检查一致性与差异
+            std::cout << "检查修为总经验: 当前总经验=" << cultivation_total_exp 
+                      << ", 计算值=" << calculatedTotalExp
+                      << ", 差异=" << (cultivation_total_exp - calculatedTotalExp) << '\n';
+            
+            // 允许5点以内的误差，避免因四舍五入导致不一致
+            if (std::abs(cultivation_total_exp - calculatedTotalExp) <= 5) {
+                return;
+            }
+        }
+        
         // 获取当前修为值
         int current_value = getCultivationValue();
         
@@ -98,6 +116,13 @@ void Character::calculateTotalExp(const std::map<std::string, CultivationStage>&
         
         // 计算总经验 = 阶段最小经验 + 当前阶段获得经验
         cultivation_total_exp = min_exp + current_value;
+        
+        // 详细调试日志
+        std::cout << "计算修为总经验: 阶段=" << cultivation_level
+                  << ", 进度=" << cultivation_progress
+                  << ", 当前值=" << current_value
+                  << ", 最小经验=" << min_exp
+                  << ", 总经验=" << cultivation_total_exp << '\n';
     } catch (const std::exception& e) {
         std::cerr << "计算修为总经验错误: " << e.what() << '\n';
         cultivation_total_exp = 0;
