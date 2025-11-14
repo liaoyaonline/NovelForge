@@ -35,6 +35,7 @@ public:
     bool addCharacter(Character& character);
     bool deleteCharacter(int characterId);
     // 更新方法
+    void validateStageContinuity(std::map<std::string, CultivationStage>& stages);
     bool updateCharacter(const Character& character);
     bool saveSimulationHistory(int characterId, 
                               int days, 

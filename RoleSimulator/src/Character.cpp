@@ -36,35 +36,68 @@ int Character::getCultivationMax() const {
     }
 }
 
+int Character::getCurrentStageMinExp(const std::map<std::string, CultivationStage>& stages) const {
+    auto it = stages.find(cultivation_level);
+    if (it != stages.end()) {
+        return it->second.min_exp;
+    }
+    
+    // 如果找不到，尝试模糊匹配
+    for (const auto& stage : stages) {
+        if (stage.first.find(cultivation_level) != std::string::npos) {
+            return stage.second.min_exp;
+        }
+    }
+    
+    return 0;
+}
+
+int Character::getCurrentStageExp(const std::map<std::string, CultivationStage>& stages) const {
+    return cultivation_total_exp - getCurrentStageMinExp(stages);
+}
+
 void Character::updateCultivationProgress(const std::map<std::string, CultivationStage>& stages) {
+    int minExp = getCurrentStageMinExp(stages);
+    int currentStageExp = cultivation_total_exp - minExp;
+    
     auto it = stages.find(cultivation_level);
     if (it == stages.end()) {
-        throw std::runtime_error("未知的修为阶段: " + cultivation_level);
+        // 尝试模糊匹配
+        for (const auto& stage : stages) {
+            if (stage.first.find(cultivation_level) != std::string::npos) {
+                cultivation_level = stage.first;
+                it = stages.find(cultivation_level);
+                break;
+            }
+        }
+        
+        if (it == stages.end()) {
+            throw std::runtime_error("未知的修为阶段: " + cultivation_level);
+        }
     }
     
     const CultivationStage& stage = it->second;
-    int currentExpInStage = cultivation_total_exp - stage.min_exp;
     
-    if (currentExpInStage < 0) currentExpInStage = 0;
-    if (currentExpInStage > stage.exp_required) currentExpInStage = stage.exp_required;
+    // 确保经验值在有效范围内
+    if (currentStageExp < 0) currentStageExp = 0;
+    if (currentStageExp > stage.exp_required) {
+        // 如果超过当前阶段，只显示最大值
+        currentStageExp = stage.exp_required;
+    }
     
-    cultivation_progress = std::to_string(currentExpInStage) + "/" + std::to_string(stage.exp_required);
+    cultivation_progress = std::to_string(currentStageExp) + "/" + std::to_string(stage.exp_required);
 }
-
 
 void Character::calculateTotalExp(const std::map<std::string, CultivationStage>& stages) {
     try {
         // 获取当前修为值
         int current_value = getCultivationValue();
         
-        // 查找当前修为阶段
-        auto it = stages.find(cultivation_level);
-        if (it == stages.end()) {
-            throw std::runtime_error("未知的修为阶段: " + cultivation_level);
-        }
+        // 获取当前阶段最小经验
+        int min_exp = getCurrentStageMinExp(stages);
         
         // 计算总经验 = 阶段最小经验 + 当前阶段获得经验
-        cultivation_total_exp = it->second.min_exp + current_value;
+        cultivation_total_exp = min_exp + current_value;
     } catch (const std::exception& e) {
         std::cerr << "计算修为总经验错误: " << e.what() << '\n';
         cultivation_total_exp = 0;

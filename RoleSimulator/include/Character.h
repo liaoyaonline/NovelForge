@@ -6,6 +6,7 @@
 #include <map>
 #include <stdexcept>
 #include <iostream>
+#include <algorithm> // 添加algorithm头文件
 
 struct Skill {
     std::string name;
@@ -26,6 +27,8 @@ struct CultivationStage {
     int exp_required;
     double base_rate;
     int time_required;
+    int stage_order;       // 新增顺序字段
+    std::string previous;  // 新增前序阶段字段
 };
 
 struct TimeAllocation {
@@ -55,11 +58,18 @@ public:
     // 获取当前修为上限（进度条分母）
     int getCultivationMax() const;
     
+    // 获取当前阶段最小经验
+    int getCurrentStageMinExp(const std::map<std::string, CultivationStage>& stages) const;
+    
+    // 获取当前阶段已获得经验
+    int getCurrentStageExp(const std::map<std::string, CultivationStage>& stages) const;
+    
     // 根据修为阶段配置计算总经验值
     void calculateTotalExp(const std::map<std::string, CultivationStage>& stages);
     
     // 更新修为进度字符串
     void updateCultivationProgress(const std::map<std::string, CultivationStage>& stages);
+
 };
 
 #endif // CHARACTER_H

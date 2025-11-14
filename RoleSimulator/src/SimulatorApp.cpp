@@ -161,19 +161,38 @@ void Simulator::handleCultivationUpgrade(Character& character,
     const CultivationStage& currentStage = currentStageIt->second;
     int currentExpInStage = character.cultivation_total_exp - currentStage.min_exp;
     
+    // 检查是否达到突破条件
     if (currentExpInStage >= currentStage.exp_required) {
+        // 查找下一个阶段（根据顺序和前置关系）
         std::string nextLevel;
-        for (const auto& stage : cultivationStages) {
-            if (stage.second.min_exp == currentStage.min_exp + currentStage.exp_required) {
-                nextLevel = stage.first;
-                break;
+        int nextOrder = currentStage.stage_order + 1;
+        
+        for (const auto& stagePair : cultivationStages) {
+            if (stagePair.second.stage_order == nextOrder) {
+                // 验证前置关系
+                if (stagePair.second.previous == character.cultivation_level) {
+                    nextLevel = stagePair.first;
+                    break;
+                }
             }
         }
         
         if (!nextLevel.empty()) {
             character.cultivation_level = nextLevel;
             std::cout << "修为突破! 达到 " << nextLevel << "!\n";
+            
+            // 确保不会跳过多个阶段
+            int overflowExp = currentExpInStage - currentStage.exp_required;
+            if (overflowExp > 0) {
+                // 只转移到下一个阶段，不连续升级
+                auto nextStageIt = cultivationStages.find(nextLevel);
+                if (nextStageIt != cultivationStages.end()) {
+                    character.cultivation_total_exp = nextStageIt->second.min_exp + 
+                                                     std::min(overflowExp, nextStageIt->second.exp_required);
+                }
+            }
         } else {
+            // 未找到下一阶段，可能是最高境界
             currentExpInStage = currentStage.exp_required;
             character.cultivation_total_exp = currentStage.min_exp + currentStage.exp_required;
         }

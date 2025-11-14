@@ -136,9 +136,11 @@ std::map<std::string, CultivationStage> DatabaseManager::loadCultivationStages()
     
     try {
         sql::Statement* stmt = conn->createStatement();
+        // 添加stage_order和previous_stage字段
         sql::ResultSet* res = stmt->executeQuery(
-            "SELECT level, exp_required, base_rate, time_required "
-            "FROM cultivation_stages ORDER BY time_required ASC"
+            "SELECT level, exp_required, base_rate, time_required, "
+            "stage_order, previous_stage "
+            "FROM cultivation_stages ORDER BY stage_order ASC"  // 按顺序排序
         );
         
         while (res->next()) {
@@ -147,11 +149,16 @@ std::map<std::string, CultivationStage> DatabaseManager::loadCultivationStages()
             stage.exp_required = res->getInt("exp_required");
             stage.base_rate = res->getDouble("base_rate");
             stage.time_required = res->getInt("time_required");
+            stage.stage_order = res->getInt("stage_order");
+            stage.previous = res->getString("previous_stage");
             stages[stage.level] = stage;
         }
         delete res;
         delete stmt;
         calculateStageMinExp(stages);
+        
+        // 验证阶段连续性
+        validateStageContinuity(stages);
     } catch (const sql::SQLException &e) {
         std::cerr << "加载修为阶段时SQL错误: " << e.what() << '\n';
     }
@@ -159,10 +166,40 @@ std::map<std::string, CultivationStage> DatabaseManager::loadCultivationStages()
 }
 
 void DatabaseManager::calculateStageMinExp(std::map<std::string, CultivationStage>& stages) {
-    int totalExp = 0;
+    // 按阶段顺序排序
+    std::vector<CultivationStage> orderedStages;
     for (auto& pair : stages) {
-        pair.second.min_exp = totalExp;
-        totalExp += pair.second.exp_required;
+        orderedStages.push_back(pair.second);
+    }
+    
+    // 按stage_order排序
+    std::sort(orderedStages.begin(), orderedStages.end(), 
+        [](const CultivationStage& a, const CultivationStage& b) {
+            return a.stage_order < b.stage_order;
+        });
+    
+    // 按顺序计算最小经验
+    int totalExp = 0;
+    for (auto& stage : orderedStages) {
+        stages[stage.level].min_exp = totalExp;
+        totalExp += stage.exp_required;
+    }
+}
+
+void DatabaseManager::validateStageContinuity(std::map<std::string, CultivationStage>& stages) {
+    for (const auto& pair : stages) {
+        const CultivationStage& stage = pair.second;
+        if (!stage.previous.empty()) {
+            if (stages.find(stage.previous) == stages.end()) {
+                std::cerr << "警告: 阶段 '" << stage.level 
+                          << "' 的前置阶段 '" << stage.previous 
+                          << "' 不存在!\n";
+            } else if (stages[stage.previous].stage_order != stage.stage_order - 1) {
+                std::cerr << "警告: 阶段 '" << stage.level 
+                          << "' 的前置阶段顺序错误 (应为 " 
+                          << (stage.stage_order - 1) << ")\n";
+            }
+        }
     }
 }
 
